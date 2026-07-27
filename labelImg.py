@@ -272,11 +272,15 @@ class MainWindow(QMainWindow, WindowMixin):
 
         create_mode = action(get_str('crtBox'), self.set_create_mode,
                              'w', 'new', get_str('crtBoxDetail'), enabled=False)
+        create_poly_mode = action("Create\nPolygon", self.set_create_poly_mode,
+                                  'q', 'new', "Draw a polygon", enabled=False)
         edit_mode = action(get_str('editBox'), self.set_edit_mode,
                            'Ctrl+J', 'edit', get_str('editBoxDetail'), enabled=False)
 
         create = action(get_str('crtBox'), self.create_shape,
                         'w', 'new', get_str('crtBoxDetail'), enabled=False)
+        create_poly = action("Create\nPolygon", self.create_polygon,
+                             'q', 'new', "Draw a polygon", enabled=False)
         delete = action(get_str('delBox'), self.delete_selected_shape,
                         'Delete', 'delete', get_str('delBoxDetail'), enabled=False)
         copy = action(get_str('dupBox'), self.copy_selected_shape,
@@ -381,8 +385,8 @@ class MainWindow(QMainWindow, WindowMixin):
 
         # Store actions for further handling.
         self.actions = Struct(save=save, save_format=save_format, saveAs=save_as, open=open, close=close, resetAll=reset_all, deleteImg=delete_image,
-                              lineColor=color1, create=create, delete=delete, edit=edit, copy=copy,
-                              createMode=create_mode, editMode=edit_mode, advancedMode=advanced_mode,
+                              lineColor=color1, create=create, create_poly=create_poly, delete=delete, edit=edit, copy=copy,
+                              createMode=create_mode, createPolyMode=create_poly_mode, editMode=edit_mode, advancedMode=advanced_mode,
                               shapeLineColor=shape_line_color, shapeFillColor=shape_fill_color,
                               zoom=zoom, zoomIn=zoom_in, zoomOut=zoom_out, zoomOrg=zoom_org,
                               fitWindow=fit_window, fitWidth=fit_width,
@@ -394,11 +398,11 @@ class MainWindow(QMainWindow, WindowMixin):
                               beginner=(), advanced=(),
                               editMenu=(edit, copy, delete,
                                         None, color1, self.draw_squares_option),
-                              beginnerContext=(create, edit, copy, delete),
-                              advancedContext=(create_mode, edit_mode, edit, copy,
+                              beginnerContext=(create, create_poly, edit, copy, delete),
+                              advancedContext=(create_mode, create_poly_mode, edit_mode, edit, copy,
                                                delete, shape_line_color, shape_fill_color),
                               onLoadActive=(
-                                  close, create, create_mode, edit_mode),
+                                  close, create, create_poly, create_mode, create_poly_mode, edit_mode),
                               onShapesPresent=(save_as, hide_all, show_all))
 
         self.menus = Struct(
@@ -449,13 +453,13 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
-            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, copy, delete, None,
+            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, copy, delete, None,
             zoom_in, zoom, zoom_out, fit_window, fit_width, None,
             light_brighten, light, light_darken, light_org)
 
         self.actions.advanced = (
             open, open_dir, change_save_dir, open_next_image, open_prev_image, save, save_format, None,
-            create_mode, edit_mode, None,
+            create_mode, create_poly_mode, edit_mode, None,
             hide_all, show_all)
 
         self.statusBar().showMessage('%s started.' % __appname__)
@@ -624,6 +628,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.dirty = False
         self.actions.save.setEnabled(False)
         self.actions.create.setEnabled(True)
+        self.actions.create_poly.setEnabled(True)
 
     def toggle_actions(self, value=True):
         """Enable/Disable widgets which depend on an opened image."""
@@ -704,7 +709,16 @@ class MainWindow(QMainWindow, WindowMixin):
     def create_shape(self):
         assert self.beginner()
         self.canvas.set_editing(False)
+        self.canvas.draw_polygon_mode = False
         self.actions.create.setEnabled(False)
+        self.actions.create_poly.setEnabled(False)
+
+    def create_polygon(self):
+        assert self.beginner()
+        self.canvas.set_editing(False)
+        self.canvas.draw_polygon_mode = True
+        self.actions.create.setEnabled(False)
+        self.actions.create_poly.setEnabled(False)
 
     def toggle_drawing_sensitive(self, drawing=True):
         """In the middle of drawing, toggling between modes should be disabled."""
@@ -715,14 +729,22 @@ class MainWindow(QMainWindow, WindowMixin):
             self.canvas.set_editing(True)
             self.canvas.restore_cursor()
             self.actions.create.setEnabled(True)
+            self.actions.create_poly.setEnabled(True)
 
     def toggle_draw_mode(self, edit=True):
         self.canvas.set_editing(edit)
         self.actions.createMode.setEnabled(edit)
+        self.actions.createPolyMode.setEnabled(edit)
         self.actions.editMode.setEnabled(not edit)
 
     def set_create_mode(self):
         assert self.advanced()
+        self.canvas.draw_polygon_mode = False
+        self.toggle_draw_mode(False)
+
+    def set_create_poly_mode(self):
+        assert self.advanced()
+        self.canvas.draw_polygon_mode = True
         self.toggle_draw_mode(False)
 
     def set_edit_mode(self):
@@ -837,8 +859,14 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def load_labels(self, shapes):
         s = []
-        for label, points, line_color, fill_color, difficult in shapes:
+        for item in shapes:
+            if len(item) == 6:
+                label, points, line_color, fill_color, difficult, is_polygon = item
+            else:
+                label, points, line_color, fill_color, difficult = item
+                is_polygon = False
             shape = Shape(label=label)
+            shape.is_polygon = is_polygon
             for x, y in points:
 
                 # Ensure the labels are within the bounds of the image. If not, fix them.
@@ -888,7 +916,8 @@ class MainWindow(QMainWindow, WindowMixin):
                         fill_color=s.fill_color.getRgb(),
                         points=[(p.x(), p.y()) for p in s.points],
                         # add chris
-                        difficult=s.difficult)
+                        difficult=s.difficult,
+                        is_polygon=getattr(s, 'is_polygon', False))
 
         shapes = [format_shape(shape) for shape in self.canvas.shapes]
         # Can add different annotation formats here
@@ -984,6 +1013,7 @@ class MainWindow(QMainWindow, WindowMixin):
             if self.beginner():  # Switch to edit mode.
                 self.canvas.set_editing(True)
                 self.actions.create.setEnabled(True)
+                self.actions.create_poly.setEnabled(True)
             else:
                 self.actions.editMode.setEnabled(True)
             self.set_dirty()
@@ -1178,6 +1208,8 @@ class MainWindow(QMainWindow, WindowMixin):
         return '[{} / {}]'.format(self.cur_img_idx + 1, self.img_count)
 
     def show_bounding_box_from_annotation_file(self, file_path):
+        if not file_path:
+            return
         if self.default_save_dir is not None:
             basename = os.path.basename(os.path.splitext(file_path)[0])
             xml_path = os.path.join(self.default_save_dir, basename + XML_EXT)
@@ -1465,6 +1497,8 @@ class MainWindow(QMainWindow, WindowMixin):
             self.load_file(filename)
 
     def save_file(self, _value=False):
+        if not self.file_path:
+            return
         if self.default_save_dir is not None and len(ustr(self.default_save_dir)):
             if self.file_path:
                 image_file_name = os.path.basename(self.file_path)

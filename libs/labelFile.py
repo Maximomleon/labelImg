@@ -105,8 +105,12 @@ class LabelFile(object):
             label = shape['label']
             # Add Chris
             difficult = int(shape['difficult'])
-            bnd_box = LabelFile.convert_points_to_bnd_box(points)
-            writer.add_bnd_box(bnd_box[0], bnd_box[1], bnd_box[2], bnd_box[3], label, difficult)
+            is_polygon = shape.get('is_polygon', False)
+            if is_polygon:
+                writer.add_shape(points, label, difficult, is_polygon=True)
+            else:
+                bnd_box = LabelFile.convert_points_to_bnd_box(points)
+                writer.add_bnd_box(bnd_box[0], bnd_box[1], bnd_box[2], bnd_box[3], label, difficult)
 
         writer.save(target_file=filename, class_list=class_list)
         return

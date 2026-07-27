@@ -45,6 +45,7 @@ class Shape(object):
         self.selected = False
         self.difficult = difficult
         self.paint_label = paint_label
+        self.is_polygon = False
 
         self._highlight_index = None
         self._highlight_mode = self.NEAR_VERTEX
@@ -65,6 +66,8 @@ class Shape(object):
         self._closed = True
 
     def reach_max_points(self):
+        if self.is_polygon:
+            return False
         if len(self.points) >= 4:
             return True
         return False
@@ -192,6 +195,7 @@ class Shape(object):
         shape.fill = self.fill
         shape.selected = self.selected
         shape._closed = self._closed
+        shape.is_polygon = self.is_polygon
         if self.line_color != Shape.line_color:
             shape.line_color = self.line_color
         if self.fill_color != Shape.fill_color:

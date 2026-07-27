@@ -19,17 +19,25 @@ class YOLOWriter:
         self.local_img_path = local_img_path
         self.verified = False
 
+    def add_shape(self, points, name, difficult, is_polygon=False):
+        self.box_list.append({
+            'points': points,
+            'name': name,
+            'difficult': difficult,
+            'is_polygon': is_polygon
+        })
+
     def add_bnd_box(self, x_min, y_min, x_max, y_max, name, difficult):
-        bnd_box = {'xmin': x_min, 'ymin': y_min, 'xmax': x_max, 'ymax': y_max}
-        bnd_box['name'] = name
-        bnd_box['difficult'] = difficult
-        self.box_list.append(bnd_box)
+        points = [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
+        self.add_shape(points, name, difficult, is_polygon=False)
 
     def bnd_box_to_yolo_line(self, box, class_list=[]):
-        x_min = box['xmin']
-        x_max = box['xmax']
-        y_min = box['ymin']
-        y_max = box['ymax']
+        # Kept for compatibility if called externally, but we handle it manually in save()
+        pts = box['points']
+        x_coords = [p[0] for p in pts]
+        y_coords = [p[1] for p in pts]
+        x_min, x_max = min(x_coords), max(x_coords)
+        y_min, y_max = min(y_coords), max(y_coords)
 
         x_center = float((x_min + x_max)) / 2 / self.img_size[1]
         y_center = float((y_min + y_max)) / 2 / self.img_size[0]
@@ -37,7 +45,6 @@ class YOLOWriter:
         w = float((x_max - x_min)) / self.img_size[1]
         h = float((y_max - y_min)) / self.img_size[0]
 
-        # PR387
         box_name = box['name']
         if box_name not in class_list:
             class_list.append(box_name)
@@ -64,12 +71,22 @@ class YOLOWriter:
 
 
         for box in self.box_list:
-            class_index, x_center, y_center, w, h = self.bnd_box_to_yolo_line(box, class_list)
-            # print (classIndex, x_center, y_center, w, h)
-            out_file.write("%d %.6f %.6f %.6f %.6f\n" % (class_index, x_center, y_center, w, h))
+            box_name = box['name']
+            if box_name not in class_list:
+                class_list.append(box_name)
+            class_index = class_list.index(box_name)
 
-        # print (classList)
-        # print (out_class_file)
+            if box.get('is_polygon', False):
+                coords = []
+                for p in box['points']:
+                    x_norm = float(p[0]) / self.img_size[1]
+                    y_norm = float(p[1]) / self.img_size[0]
+                    coords.append(f"{x_norm:.6f} {y_norm:.6f}")
+                out_file.write(f"{class_index} " + " ".join(coords) + "\n")
+            else:
+                class_index, x_center, y_center, w, h = self.bnd_box_to_yolo_line(box, class_list)
+                out_file.write("%d %.6f %.6f %.6f %.6f\n" % (class_index, x_center, y_center, w, h))
+
         for c in class_list:
             out_class_file.write(c+'\n')
 
@@ -116,7 +133,7 @@ class YoloReader:
     def add_shape(self, label, x_min, y_min, x_max, y_max, difficult):
 
         points = [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
-        self.shapes.append((label, points, None, None, difficult))
+        self.shapes.append((label, points, None, None, difficult, False))
 
     def yolo_line_to_shape(self, class_index, x_center, y_center, w, h):
         label = self.classes[int(class_index)]
@@ -136,8 +153,21 @@ class YoloReader:
     def parse_yolo_format(self):
         bnd_box_file = open(self.file_path, 'r')
         for bndBox in bnd_box_file:
-            class_index, x_center, y_center, w, h = bndBox.strip().split(' ')
-            label, x_min, y_min, x_max, y_max = self.yolo_line_to_shape(class_index, x_center, y_center, w, h)
+            parts = bndBox.strip().split(' ')
+            if len(parts) == 5:
+                class_index, x_center, y_center, w, h = parts
+                label, x_min, y_min, x_max, y_max = self.yolo_line_to_shape(class_index, x_center, y_center, w, h)
 
-            # Caveat: difficult flag is discarded when saved as yolo format.
-            self.add_shape(label, x_min, y_min, x_max, y_max, False)
+                # Caveat: difficult flag is discarded when saved as yolo format.
+                self.add_shape(label, x_min, y_min, x_max, y_max, False)
+            elif len(parts) >= 7 and len(parts) % 2 == 1:
+                class_index = int(parts[0])
+                label = self.classes[class_index]
+                points = []
+                for i in range(1, len(parts), 2):
+                    x_norm = float(parts[i])
+                    y_norm = float(parts[i+1])
+                    x = round(x_norm * self.img_size[1])
+                    y = round(y_norm * self.img_size[0])
+                    points.append((x, y))
+                self.shapes.append((label, points, None, None, False, True))

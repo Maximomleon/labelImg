@@ -65,6 +65,7 @@ class Canvas(QWidget):
         self.setFocusPolicy(Qt.WheelFocus)
         self.verified = False
         self.draw_square = False
+        self.draw_polygon_mode = False
 
         # initialisation for panning
         self.pan_initial_pos = QPoint()
@@ -183,12 +184,16 @@ class Canvas(QWidget):
                 self.repaint()
 
                 # Display annotation width and height while moving vertex
-                point1 = self.h_shape[1]
-                point3 = self.h_shape[3]
-                current_width = abs(point1.x() - point3.x())
-                current_height = abs(point1.y() - point3.y())
-                self.parent().window().label_coordinates.setText(
-                        'Width: %d, Height: %d / X: %d; Y: %d' % (current_width, current_height, pos.x(), pos.y()))
+                if len(self.h_shape.points) >= 4:
+                    point1 = self.h_shape[1]
+                    point3 = self.h_shape[3]
+                    current_width = abs(point1.x() - point3.x())
+                    current_height = abs(point1.y() - point3.y())
+                    self.parent().window().label_coordinates.setText(
+                            'Width: %d, Height: %d / X: %d; Y: %d' % (current_width, current_height, pos.x(), pos.y()))
+                else:
+                    self.parent().window().label_coordinates.setText(
+                            'X: %d; Y: %d' % (pos.x(), pos.y()))
             elif self.selected_shape and self.prev_point:
                 self.override_cursor(CURSOR_MOVE)
                 self.bounded_move_shape(self.selected_shape, pos)
@@ -196,12 +201,16 @@ class Canvas(QWidget):
                 self.repaint()
 
                 # Display annotation width and height while moving shape
-                point1 = self.selected_shape[1]
-                point3 = self.selected_shape[3]
-                current_width = abs(point1.x() - point3.x())
-                current_height = abs(point1.y() - point3.y())
-                self.parent().window().label_coordinates.setText(
-                        'Width: %d, Height: %d / X: %d; Y: %d' % (current_width, current_height, pos.x(), pos.y()))
+                if len(self.selected_shape.points) >= 4:
+                    point1 = self.selected_shape[1]
+                    point3 = self.selected_shape[3]
+                    current_width = abs(point1.x() - point3.x())
+                    current_height = abs(point1.y() - point3.y())
+                    self.parent().window().label_coordinates.setText(
+                            'Width: %d, Height: %d / X: %d; Y: %d' % (current_width, current_height, pos.x(), pos.y()))
+                else:
+                    self.parent().window().label_coordinates.setText(
+                            'X: %d; Y: %d' % (pos.x(), pos.y()))
             else:
                 # pan
                 delta = ev.pos() - self.pan_initial_pos
@@ -241,12 +250,16 @@ class Canvas(QWidget):
                 self.update()
 
                 # Display annotation width and height while hovering inside
-                point1 = self.h_shape[1]
-                point3 = self.h_shape[3]
-                current_width = abs(point1.x() - point3.x())
-                current_height = abs(point1.y() - point3.y())
-                self.parent().window().label_coordinates.setText(
-                        'Width: %d, Height: %d / X: %d; Y: %d' % (current_width, current_height, pos.x(), pos.y()))
+                if len(self.h_shape.points) >= 4:
+                    point1 = self.h_shape[1]
+                    point3 = self.h_shape[3]
+                    current_width = abs(point1.x() - point3.x())
+                    current_height = abs(point1.y() - point3.y())
+                    self.parent().window().label_coordinates.setText(
+                            'Width: %d, Height: %d / X: %d; Y: %d' % (current_width, current_height, pos.x(), pos.y()))
+                else:
+                    self.parent().window().label_coordinates.setText(
+                            'X: %d; Y: %d' % (pos.x(), pos.y()))
                 break
         else:  # Nothing found, clear highlights, reset state.
             if self.h_shape:
@@ -320,24 +333,42 @@ class Canvas(QWidget):
             self.repaint()
 
     def handle_drawing(self, pos):
-        if self.current and self.current.reach_max_points() is False:
-            init_pos = self.current[0]
-            min_x = init_pos.x()
-            min_y = init_pos.y()
-            target_pos = self.line[1]
-            max_x = target_pos.x()
-            max_y = target_pos.y()
-            self.current.add_point(QPointF(max_x, min_y))
-            self.current.add_point(target_pos)
-            self.current.add_point(QPointF(min_x, max_y))
-            self.finalise()
-        elif not self.out_of_pixmap(pos):
-            self.current = Shape()
-            self.current.add_point(pos)
-            self.line.points = [pos, pos]
-            self.set_hiding()
-            self.drawingPolygon.emit(True)
-            self.update()
+        if self.draw_polygon_mode:
+            if self.current:
+                if len(self.current) > 2 and self.close_enough(pos, self.current[0]):
+                    self.finalise()
+                else:
+                    if not self.out_of_pixmap(pos):
+                        self.current.add_point(pos)
+                        self.line.points = [pos, pos]
+                        self.update()
+            elif not self.out_of_pixmap(pos):
+                self.current = Shape()
+                self.current.is_polygon = True
+                self.current.add_point(pos)
+                self.line.points = [pos, pos]
+                self.set_hiding()
+                self.drawingPolygon.emit(True)
+                self.update()
+        else:
+            if self.current and self.current.reach_max_points() is False:
+                init_pos = self.current[0]
+                min_x = init_pos.x()
+                min_y = init_pos.y()
+                target_pos = self.line[1]
+                max_x = target_pos.x()
+                max_y = target_pos.y()
+                self.current.add_point(QPointF(max_x, min_y))
+                self.current.add_point(target_pos)
+                self.current.add_point(QPointF(min_x, max_y))
+                self.finalise()
+            elif not self.out_of_pixmap(pos):
+                self.current = Shape()
+                self.current.add_point(pos)
+                self.line.points = [pos, pos]
+                self.set_hiding()
+                self.drawingPolygon.emit(True)
+                self.update()
 
     def set_hiding(self, enable=True):
         self._hide_background = self.hide_background if enable else False
@@ -419,6 +450,9 @@ class Canvas(QWidget):
             shift_pos = pos - point
 
         shape.move_vertex_by(index, shift_pos)
+
+        if getattr(shape, 'is_polygon', False):
+            return
 
         left_index = (index + 1) % 4
         right_index = (index + 3) % 4
@@ -648,33 +682,25 @@ class Canvas(QWidget):
         # print(self.selectedShape.points)
         if direction == 'Left' and not self.move_out_of_bound(QPointF(-1.0, 0)):
             # print("move Left one pixel")
-            self.selected_shape.points[0] += QPointF(-1.0, 0)
-            self.selected_shape.points[1] += QPointF(-1.0, 0)
-            self.selected_shape.points[2] += QPointF(-1.0, 0)
-            self.selected_shape.points[3] += QPointF(-1.0, 0)
+            for i in range(len(self.selected_shape.points)):
+                self.selected_shape.points[i] += QPointF(-1.0, 0)
         elif direction == 'Right' and not self.move_out_of_bound(QPointF(1.0, 0)):
             # print("move Right one pixel")
-            self.selected_shape.points[0] += QPointF(1.0, 0)
-            self.selected_shape.points[1] += QPointF(1.0, 0)
-            self.selected_shape.points[2] += QPointF(1.0, 0)
-            self.selected_shape.points[3] += QPointF(1.0, 0)
+            for i in range(len(self.selected_shape.points)):
+                self.selected_shape.points[i] += QPointF(1.0, 0)
         elif direction == 'Up' and not self.move_out_of_bound(QPointF(0, -1.0)):
             # print("move Up one pixel")
-            self.selected_shape.points[0] += QPointF(0, -1.0)
-            self.selected_shape.points[1] += QPointF(0, -1.0)
-            self.selected_shape.points[2] += QPointF(0, -1.0)
-            self.selected_shape.points[3] += QPointF(0, -1.0)
+            for i in range(len(self.selected_shape.points)):
+                self.selected_shape.points[i] += QPointF(0, -1.0)
         elif direction == 'Down' and not self.move_out_of_bound(QPointF(0, 1.0)):
             # print("move Down one pixel")
-            self.selected_shape.points[0] += QPointF(0, 1.0)
-            self.selected_shape.points[1] += QPointF(0, 1.0)
-            self.selected_shape.points[2] += QPointF(0, 1.0)
-            self.selected_shape.points[3] += QPointF(0, 1.0)
+            for i in range(len(self.selected_shape.points)):
+                self.selected_shape.points[i] += QPointF(0, 1.0)
         self.shapeMoved.emit()
         self.repaint()
 
     def move_out_of_bound(self, step):
-        points = [p1 + p2 for p1, p2 in zip(self.selected_shape.points, [step] * 4)]
+        points = [p1 + p2 for p1, p2 in zip(self.selected_shape.points, [step] * len(self.selected_shape.points))]
         return True in map(self.out_of_pixmap, points)
 
     def set_last_label(self, text, line_color=None, fill_color=None):
