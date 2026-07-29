@@ -878,7 +878,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 label, points, line_color, fill_color, difficult, is_polygon = item
             else:
                 label, points, line_color, fill_color, difficult = item
-                is_polygon = False
+                is_polygon = True
             shape = Shape(label=label)
             shape.is_polygon = is_polygon
             for x, y in points:
