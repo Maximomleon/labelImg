@@ -1722,14 +1722,16 @@ class MainWindow(QMainWindow, WindowMixin):
         curr_classes = self.settings.get(SETTING_YOLO_CLASSES_PATH, "")
         curr_conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
         curr_imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
+        curr_scale = self.settings.get(SETTING_YOLO_SCALE, "nano")
 
-        dlg = YoloSettingsDialog(self, curr_model, curr_classes, curr_conf, curr_imgsz)
+        dlg = YoloSettingsDialog(self, curr_model, curr_classes, curr_conf, curr_imgsz, curr_scale)
         if dlg.exec_():
             vals = dlg.get_values()
             self.settings[SETTING_YOLO_MODEL_PATH] = vals["model_path"]
             self.settings[SETTING_YOLO_CLASSES_PATH] = vals["classes_path"]
             self.settings[SETTING_YOLO_CONF] = vals["conf"]
             self.settings[SETTING_YOLO_IMGSZ] = vals["imgsz"]
+            self.settings[SETTING_YOLO_SCALE] = vals["scale"]
             self.settings.save()
 
             if vals["classes_path"] and os.path.exists(vals["classes_path"]):
