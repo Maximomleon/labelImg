@@ -1774,7 +1774,7 @@ class MainWindow(QMainWindow, WindowMixin):
                         (x2, y2),
                         (x1, y2)
                     ]
-                    shapes.append((class_name, points, None, None, False, False))
+                    shapes.append((class_name, points, None, None, False, True))
                     
             if shapes:
                 self.load_labels(shapes)
