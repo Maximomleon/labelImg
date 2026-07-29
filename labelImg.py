@@ -47,6 +47,7 @@ from libs.create_ml_io import CreateMLReader
 from libs.create_ml_io import JSON_EXT
 from libs.ustr import ustr
 from libs.hashableQListWidgetItem import HashableQListWidgetItem
+from libs.yoloSettingsDialog import YoloSettingsDialog
 
 __appname__ = 'labelImg'
 
@@ -250,6 +251,10 @@ class MainWindow(QMainWindow, WindowMixin):
                                  'Ctrl+Shift+G', 'verify', 'Auto detect labels for ALL images in directory', enabled=False)
         self.addAction(auto_detect_all)
 
+        yolo_settings = action('YOLO Settings...', self.open_yolo_settings_dialog,
+                               'Ctrl+Shift+Y', 'open', 'Configurar modelo, clases y parametros de YOLO', enabled=True)
+        self.addAction(yolo_settings)
+
         def get_format_meta(format):
             """
             returns a tuple containing (title, icon_name) of the selected format
@@ -401,15 +406,15 @@ class MainWindow(QMainWindow, WindowMixin):
                               zoomActions=zoom_actions,
                               lightBrighten=light_brighten, lightDarken=light_darken, lightOrg=light_org,
                               lightActions=light_actions,
-                              autoDetect=auto_detect, autoDetectAll=auto_detect_all,
+                              autoDetect=auto_detect, autoDetectAll=auto_detect_all, yoloSettings=yolo_settings,
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
                               beginner=(), advanced=(),
                               editMenu=(edit, copy, delete,
-                                        None, color1, self.draw_squares_option, auto_detect, auto_detect_all),
-                              beginnerContext=(create, create_poly, edit, copy, delete, auto_detect, auto_detect_all),
+                                        None, color1, self.draw_squares_option, auto_detect, auto_detect_all, yolo_settings),
+                              beginnerContext=(create, create_poly, edit, copy, delete, auto_detect, auto_detect_all, yolo_settings),
                               advancedContext=(create_mode, create_poly_mode, edit_mode, edit, copy,
-                                               delete, shape_line_color, shape_fill_color, auto_detect, auto_detect_all),
+                                               delete, shape_line_color, shape_fill_color, auto_detect, auto_detect_all, yolo_settings),
                               onLoadActive=(
                                   close, create, create_poly, create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all),
                               onShapesPresent=(save_as, hide_all, show_all))
@@ -462,13 +467,13 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
-            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, auto_detect, auto_detect_all, copy, delete, None,
+            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, auto_detect, auto_detect_all, yolo_settings, copy, delete, None,
             zoom_in, zoom, zoom_out, fit_window, fit_width, None,
             light_brighten, light, light_darken, light_org)
 
         self.actions.advanced = (
             open, open_dir, change_save_dir, open_next_image, open_prev_image, save, save_format, None,
-            create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, None,
+            create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, yolo_settings, None,
             hide_all, show_all)
 
         self.statusBar().showMessage('%s started.' % __appname__)
@@ -1712,71 +1717,93 @@ class MainWindow(QMainWindow, WindowMixin):
     def toggle_draw_square(self):
         self.canvas.set_drawing_shape_to_square(self.draw_squares_option.isChecked())
 
+    def open_yolo_settings_dialog(self):
+        curr_model = self.settings.get(SETTING_YOLO_MODEL_PATH, "/home/maximo/Descargas/train-6/weights/best.pt")
+        curr_classes = self.settings.get(SETTING_YOLO_CLASSES_PATH, "")
+        curr_conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
+        curr_imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
+
+        dlg = YoloSettingsDialog(self, curr_model, curr_classes, curr_conf, curr_imgsz)
+        if dlg.exec_():
+            vals = dlg.get_values()
+            self.settings[SETTING_YOLO_MODEL_PATH] = vals["model_path"]
+            self.settings[SETTING_YOLO_CLASSES_PATH] = vals["classes_path"]
+            self.settings[SETTING_YOLO_CONF] = vals["conf"]
+            self.settings[SETTING_YOLO_IMGSZ] = vals["imgsz"]
+            self.settings.save()
+
+            if vals["classes_path"] and os.path.exists(vals["classes_path"]):
+                self.load_predefined_classes(vals["classes_path"])
+
+            if getattr(self, 'loaded_yolo_path', None) != vals["model_path"]:
+                self.yolo_model = None
+
+            self.statusBar().showMessage("Configuración de YOLO actualizada.")
+
     def auto_detect_yolo(self):
         if self.file_path is None or not os.path.exists(self.file_path):
             return
-            
-        if not hasattr(self, 'yolo_model') or self.yolo_model is None:
-            # Check standard path locations
-            weights_paths = [
-                "/home/maximo/Descargas/train-6/weights/best.pt",
-                "/home/maximo/Documentos/labels/PAA/yolo26n-seg.pt"
-            ]
-            selected_path = None
-            for wp in weights_paths:
+
+        model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
+        if not model_path or not os.path.exists(model_path):
+            for wp in ["/home/maximo/Descargas/train-6/weights/best.pt", "/home/maximo/Documentos/labels/PAA/yolo26n-seg.pt"]:
                 if os.path.exists(wp):
-                    selected_path = wp
+                    model_path = wp
                     break
-            
-            if not selected_path:
-                selected_path, _ = QFileDialog.getOpenFileName(self, "Select YOLO weights file (.pt)", "/home/maximo", "Weights (*.pt)")
-                
-            if not selected_path:
-                self.statusBar().showMessage("No se selecciono ningun modelo YOLO.")
+
+        if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
+            if not model_path or not os.path.exists(model_path):
+                self.open_yolo_settings_dialog()
+                model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
+
+            if not model_path or not os.path.exists(model_path):
+                self.statusBar().showMessage("No se ha seleccionado ningún archivo .pt válido.")
                 return
-                
-            self.statusBar().showMessage("Cargando modelo YOLO (esto puede tomar unos segundos)...")
+
+            self.statusBar().showMessage(f"Cargando modelo YOLO ({os.path.basename(model_path)})...")
             QApplication.processEvents()
-            
             try:
                 from ultralytics import YOLO
-                self.yolo_model = YOLO(selected_path)
-                self.statusBar().showMessage(f"Modelo YOLO cargado: {os.path.basename(selected_path)}")
+                self.yolo_model = YOLO(model_path)
+                self.loaded_yolo_path = model_path
+                self.statusBar().showMessage(f"Modelo YOLO cargado: {os.path.basename(model_path)}")
             except Exception as e:
                 self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
                 return
-                
+
+        conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
+        imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
+
         try:
-            self.statusBar().showMessage("Ejecutando autodeteccion...")
+            self.statusBar().showMessage(f"Ejecutando autodeteccion (conf={conf}, imgsz={imgsz})...")
             QApplication.processEvents()
-            
-            results = self.yolo_model.predict(self.file_path, conf=0.25, imgsz=1280)
+
+            results = self.yolo_model.predict(self.file_path, conf=conf, imgsz=imgsz)
             if not results:
                 self.statusBar().showMessage("No se detecto ningun objeto.")
                 return
-                
+
             result = results[0]
             shapes = []
-            
+
             is_segment = hasattr(result, 'masks') and result.masks is not None
-            
+
             if is_segment:
                 import cv2
                 import numpy as np
                 for mask, box in zip(result.masks.xy, result.boxes):
                     class_idx = int(box.cls[0].item())
                     class_name = self.yolo_model.names[class_idx]
-                    
+
                     if len(mask) > 4:
                         pts = np.array(mask, dtype=np.float32).reshape((-1, 1, 2))
-                        # Use convexHull to eliminate self-intersections and twisted lines
                         hull = cv2.convexHull(pts)
                         perimeter = cv2.arcLength(hull, True)
                         approx = cv2.approxPolyDP(hull, 0.008 * perimeter, True)
                         points = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
                     else:
                         points = [(float(pt[0]), float(pt[1])) for pt in mask]
-                        
+
                     if len(points) >= 3:
                         shapes.append((class_name, points, None, None, False, True))
             else:
@@ -1792,14 +1819,14 @@ class MainWindow(QMainWindow, WindowMixin):
                         (x1, y2)
                     ]
                     shapes.append((class_name, points, None, None, False, True))
-                    
+
             if shapes:
                 self.load_labels(shapes)
                 self.set_dirty()
                 self.statusBar().showMessage(f"Autodeteccion finalizada. Se detectaron {len(shapes)} objetos.")
             else:
                 self.statusBar().showMessage("No se detecto ningun objeto.")
-                
+
         except Exception as e:
             self.statusBar().showMessage(f"Error en la deteccion: {str(e)}")
 
@@ -1808,33 +1835,34 @@ class MainWindow(QMainWindow, WindowMixin):
             self.statusBar().showMessage("No hay imagenes cargadas en el directorio.")
             return
 
-        if not hasattr(self, 'yolo_model') or self.yolo_model is None:
-            weights_paths = [
-                "/home/maximo/Descargas/train-6/weights/best.pt",
-                "/home/maximo/Documentos/labels/PAA/yolo26n-seg.pt"
-            ]
-            selected_path = None
-            for wp in weights_paths:
+        model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
+        if not model_path or not os.path.exists(model_path):
+            for wp in ["/home/maximo/Descargas/train-6/weights/best.pt", "/home/maximo/Documentos/labels/PAA/yolo26n-seg.pt"]:
                 if os.path.exists(wp):
-                    selected_path = wp
+                    model_path = wp
                     break
-            
-            if not selected_path:
-                selected_path, _ = QFileDialog.getOpenFileName(self, "Select YOLO weights file (.pt)", "/home/maximo", "Weights (*.pt)")
-                
-            if not selected_path:
-                self.statusBar().showMessage("No se selecciono ningun modelo YOLO.")
+
+        if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
+            if not model_path or not os.path.exists(model_path):
+                self.open_yolo_settings_dialog()
+                model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
+
+            if not model_path or not os.path.exists(model_path):
+                self.statusBar().showMessage("No se ha seleccionado ningún archivo .pt válido.")
                 return
-                
-            self.statusBar().showMessage("Cargando modelo YOLO...")
+
+            self.statusBar().showMessage(f"Cargando modelo YOLO ({os.path.basename(model_path)})...")
             QApplication.processEvents()
-            
             try:
                 from ultralytics import YOLO
-                self.yolo_model = YOLO(selected_path)
+                self.yolo_model = YOLO(model_path)
+                self.loaded_yolo_path = model_path
             except Exception as e:
                 self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
                 return
+
+        conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
+        imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
 
         reply = QMessageBox.question(
             self,
@@ -1843,7 +1871,7 @@ class MainWindow(QMainWindow, WindowMixin):
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes
         )
-        
+
         if reply != QMessageBox.Yes:
             return
 
@@ -1857,11 +1885,11 @@ class MainWindow(QMainWindow, WindowMixin):
 
             try:
                 self.load_file(img_path)
-                
-                results = self.yolo_model.predict(img_path, conf=0.25, imgsz=1280, verbose=False)
+
+                results = self.yolo_model.predict(img_path, conf=conf, imgsz=imgsz, verbose=False)
                 if not results:
                     continue
-                    
+
                 result = results[0]
                 shapes = []
                 is_segment = hasattr(result, 'masks') and result.masks is not None
@@ -1870,7 +1898,7 @@ class MainWindow(QMainWindow, WindowMixin):
                     for mask, box in zip(result.masks.xy, result.boxes):
                         class_idx = int(box.cls[0].item())
                         class_name = self.yolo_model.names[class_idx]
-                        
+
                         if len(mask) > 4:
                             pts = np.array(mask, dtype=np.float32).reshape((-1, 1, 2))
                             hull = cv2.convexHull(pts)
@@ -1879,7 +1907,7 @@ class MainWindow(QMainWindow, WindowMixin):
                             points = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
                         else:
                             points = [(float(pt[0]), float(pt[1])) for pt in mask]
-                            
+
                         if len(points) >= 3:
                             shapes.append((class_name, points, None, None, False, True))
                 else:
