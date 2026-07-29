@@ -255,6 +255,10 @@ class MainWindow(QMainWindow, WindowMixin):
                                'Ctrl+Shift+Y', 'open', 'Configurar modelo, clases y parametros de YOLO', enabled=True)
         self.addAction(yolo_settings)
 
+        clear_all_labels = action('Clear All Labels', self.delete_all_shapes,
+                                  'Ctrl+Shift+C', 'resetall', 'Borrar todas las etiquetas de la imagen actual', enabled=False)
+        self.addAction(clear_all_labels)
+
         def get_format_meta(format):
             """
             returns a tuple containing (title, icon_name) of the selected format
@@ -406,17 +410,17 @@ class MainWindow(QMainWindow, WindowMixin):
                               zoomActions=zoom_actions,
                               lightBrighten=light_brighten, lightDarken=light_darken, lightOrg=light_org,
                               lightActions=light_actions,
-                              autoDetect=auto_detect, autoDetectAll=auto_detect_all, yoloSettings=yolo_settings,
+                              autoDetect=auto_detect, autoDetectAll=auto_detect_all, yoloSettings=yolo_settings, clearAll=clear_all_labels,
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
                               beginner=(), advanced=(),
-                              editMenu=(edit, copy, delete,
+                              editMenu=(edit, copy, delete, clear_all_labels,
                                         None, color1, self.draw_squares_option, auto_detect, auto_detect_all, yolo_settings),
-                              beginnerContext=(create, create_poly, edit, copy, delete, auto_detect, auto_detect_all, yolo_settings),
+                              beginnerContext=(create, create_poly, edit, copy, delete, clear_all_labels, auto_detect, auto_detect_all, yolo_settings),
                               advancedContext=(create_mode, create_poly_mode, edit_mode, edit, copy,
-                                               delete, shape_line_color, shape_fill_color, auto_detect, auto_detect_all, yolo_settings),
+                                               delete, clear_all_labels, shape_line_color, shape_fill_color, auto_detect, auto_detect_all, yolo_settings),
                               onLoadActive=(
-                                  close, create, create_poly, create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all),
+                                  close, create, create_poly, create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, clear_all_labels),
                               onShapesPresent=(save_as, hide_all, show_all))
 
         self.menus = Struct(
@@ -467,13 +471,13 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
-            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, auto_detect, auto_detect_all, yolo_settings, copy, delete, None,
+            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, auto_detect, auto_detect_all, yolo_settings, copy, delete, clear_all_labels, None,
             zoom_in, zoom, zoom_out, fit_window, fit_width, None,
             light_brighten, light, light_darken, light_org)
 
         self.actions.advanced = (
             open, open_dir, change_save_dir, open_next_image, open_prev_image, save, save_format, None,
-            create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, yolo_settings, None,
+            create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, yolo_settings, clear_all_labels, None,
             hide_all, show_all)
 
         self.statusBar().showMessage('%s started.' % __appname__)
@@ -1596,6 +1600,21 @@ class MainWindow(QMainWindow, WindowMixin):
                 return True
             else:
                 return False
+
+    def delete_all_shapes(self):
+        if not self.canvas.shapes:
+            self.statusBar().showMessage("No hay etiquetas que borrar en esta imagen.")
+            return
+
+        self.canvas.shapes.clear()
+        self.canvas.selected_shape = None
+        self.canvas.repaint()
+        self.items_to_shapes.clear()
+        self.shapes_to_items.clear()
+        self.label_list.clear()
+        self.update_combo_box()
+        self.set_dirty()
+        self.statusBar().showMessage("Se eliminaron todas las etiquetas de la imagen actual.")
 
     def discard_changes_dialog(self):
         yes, no, cancel = QMessageBox.Yes, QMessageBox.No, QMessageBox.Cancel
