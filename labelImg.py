@@ -1745,7 +1745,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.statusBar().showMessage("Ejecutando autodeteccion...")
             QApplication.processEvents()
             
-            results = self.yolo_model.predict(self.file_path, conf=0.15, imgsz=1024)
+            results = self.yolo_model.predict(self.file_path, conf=0.15, imgsz=1280)
             if not results:
                 self.statusBar().showMessage("No se detecto ningun objeto.")
                 return
