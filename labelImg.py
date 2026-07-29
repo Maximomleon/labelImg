@@ -1765,8 +1765,10 @@ class MainWindow(QMainWindow, WindowMixin):
                     
                     if len(mask) > 4:
                         pts = np.array(mask, dtype=np.float32).reshape((-1, 1, 2))
-                        perimeter = cv2.arcLength(pts, True)
-                        approx = cv2.approxPolyDP(pts, 0.006 * perimeter, True)
+                        # Use convexHull to eliminate self-intersections and twisted lines
+                        hull = cv2.convexHull(pts)
+                        perimeter = cv2.arcLength(hull, True)
+                        approx = cv2.approxPolyDP(hull, 0.008 * perimeter, True)
                         points = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
                     else:
                         points = [(float(pt[0]), float(pt[1])) for pt in mask]
