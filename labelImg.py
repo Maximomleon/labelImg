@@ -1740,6 +1740,41 @@ class MainWindow(QMainWindow, WindowMixin):
 
             self.statusBar().showMessage("Configuración de YOLO actualizada.")
 
+    def format_mask_points(self, mask, class_name):
+        import cv2
+        import numpy as np
+
+        if len(mask) <= 4:
+            return [(float(pt[0]), float(pt[1])) for pt in mask]
+
+        c_lower = class_name.lower()
+        if 'walker' in c_lower:
+            max_vertices = 20
+            is_convex = False
+        elif any(k in c_lower for k in ['green', 'area', 'pasto', 'cesped', 'grass']):
+            max_vertices = 30
+            is_convex = False
+        else:
+            max_vertices = 12
+            is_convex = True
+
+        pts = np.array(mask, dtype=np.float32).reshape((-1, 1, 2))
+        if is_convex:
+            pts = cv2.convexHull(pts)
+
+        perimeter = cv2.arcLength(pts, True)
+        if perimeter == 0:
+            return [(float(pt[0]), float(pt[1])) for pt in mask]
+
+        eps_ratio = 0.001
+        approx = cv2.approxPolyDP(pts, eps_ratio * perimeter, True)
+
+        while len(approx) > max_vertices and eps_ratio < 0.1:
+            eps_ratio += 0.001
+            approx = cv2.approxPolyDP(pts, eps_ratio * perimeter, True)
+
+        return [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
+
     def auto_detect_yolo(self):
         if self.file_path is None or not os.path.exists(self.file_path):
             return
@@ -1789,21 +1824,10 @@ class MainWindow(QMainWindow, WindowMixin):
             is_segment = hasattr(result, 'masks') and result.masks is not None
 
             if is_segment:
-                import cv2
-                import numpy as np
                 for mask, box in zip(result.masks.xy, result.boxes):
                     class_idx = int(box.cls[0].item())
                     class_name = self.yolo_model.names[class_idx]
-
-                    if len(mask) > 4:
-                        pts = np.array(mask, dtype=np.float32).reshape((-1, 1, 2))
-                        hull = cv2.convexHull(pts)
-                        perimeter = cv2.arcLength(hull, True)
-                        approx = cv2.approxPolyDP(hull, 0.008 * perimeter, True)
-                        points = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
-                    else:
-                        points = [(float(pt[0]), float(pt[1])) for pt in mask]
-
+                    points = self.format_mask_points(mask, class_name)
                     if len(points) >= 3:
                         shapes.append((class_name, points, None, None, False, True))
             else:
@@ -1876,8 +1900,6 @@ class MainWindow(QMainWindow, WindowMixin):
             return
 
         total = len(self.m_img_list)
-        import cv2
-        import numpy as np
 
         for idx, img_path in enumerate(self.m_img_list):
             self.statusBar().showMessage(f"Autodetectando {idx+1}/{total}: {os.path.basename(img_path)}...")
@@ -1898,16 +1920,7 @@ class MainWindow(QMainWindow, WindowMixin):
                     for mask, box in zip(result.masks.xy, result.boxes):
                         class_idx = int(box.cls[0].item())
                         class_name = self.yolo_model.names[class_idx]
-
-                        if len(mask) > 4:
-                            pts = np.array(mask, dtype=np.float32).reshape((-1, 1, 2))
-                            hull = cv2.convexHull(pts)
-                            perimeter = cv2.arcLength(hull, True)
-                            approx = cv2.approxPolyDP(hull, 0.008 * perimeter, True)
-                            points = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
-                        else:
-                            points = [(float(pt[0]), float(pt[1])) for pt in mask]
-
+                        points = self.format_mask_points(mask, class_name)
                         if len(points) >= 3:
                             shapes.append((class_name, points, None, None, False, True))
                 else:
