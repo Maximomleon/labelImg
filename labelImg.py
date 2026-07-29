@@ -246,6 +246,10 @@ class MainWindow(QMainWindow, WindowMixin):
                              'Ctrl+G', 'verify', 'Auto detect labels using custom YOLO model', enabled=False)
         self.addAction(auto_detect)
 
+        auto_detect_all = action('Auto Detect All (Batch)', self.auto_detect_all_images,
+                                 'Ctrl+Shift+G', 'verify', 'Auto detect labels for ALL images in directory', enabled=False)
+        self.addAction(auto_detect_all)
+
         def get_format_meta(format):
             """
             returns a tuple containing (title, icon_name) of the selected format
@@ -397,17 +401,17 @@ class MainWindow(QMainWindow, WindowMixin):
                               zoomActions=zoom_actions,
                               lightBrighten=light_brighten, lightDarken=light_darken, lightOrg=light_org,
                               lightActions=light_actions,
-                              autoDetect=auto_detect,
+                              autoDetect=auto_detect, autoDetectAll=auto_detect_all,
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
                               beginner=(), advanced=(),
                               editMenu=(edit, copy, delete,
-                                        None, color1, self.draw_squares_option, auto_detect),
-                              beginnerContext=(create, create_poly, edit, copy, delete, auto_detect),
+                                        None, color1, self.draw_squares_option, auto_detect, auto_detect_all),
+                              beginnerContext=(create, create_poly, edit, copy, delete, auto_detect, auto_detect_all),
                               advancedContext=(create_mode, create_poly_mode, edit_mode, edit, copy,
-                                               delete, shape_line_color, shape_fill_color, auto_detect),
+                                               delete, shape_line_color, shape_fill_color, auto_detect, auto_detect_all),
                               onLoadActive=(
-                                  close, create, create_poly, create_mode, create_poly_mode, edit_mode, auto_detect),
+                                  close, create, create_poly, create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all),
                               onShapesPresent=(save_as, hide_all, show_all))
 
         self.menus = Struct(
@@ -458,13 +462,13 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
-            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, auto_detect, copy, delete, None,
+            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, auto_detect, auto_detect_all, copy, delete, None,
             zoom_in, zoom, zoom_out, fit_window, fit_width, None,
             light_brighten, light, light_darken, light_org)
 
         self.actions.advanced = (
             open, open_dir, change_save_dir, open_next_image, open_prev_image, save, save_format, None,
-            create_mode, create_poly_mode, edit_mode, auto_detect, None,
+            create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, None,
             hide_all, show_all)
 
         self.statusBar().showMessage('%s started.' % __appname__)
@@ -1798,6 +1802,104 @@ class MainWindow(QMainWindow, WindowMixin):
                 
         except Exception as e:
             self.statusBar().showMessage(f"Error en la deteccion: {str(e)}")
+
+    def auto_detect_all_images(self):
+        if not hasattr(self, 'm_img_list') or not self.m_img_list:
+            self.statusBar().showMessage("No hay imagenes cargadas en el directorio.")
+            return
+
+        if not hasattr(self, 'yolo_model') or self.yolo_model is None:
+            weights_paths = [
+                "/home/maximo/Descargas/train-6/weights/best.pt",
+                "/home/maximo/Documentos/labels/PAA/yolo26n-seg.pt"
+            ]
+            selected_path = None
+            for wp in weights_paths:
+                if os.path.exists(wp):
+                    selected_path = wp
+                    break
+            
+            if not selected_path:
+                selected_path, _ = QFileDialog.getOpenFileName(self, "Select YOLO weights file (.pt)", "/home/maximo", "Weights (*.pt)")
+                
+            if not selected_path:
+                self.statusBar().showMessage("No se selecciono ningun modelo YOLO.")
+                return
+                
+            self.statusBar().showMessage("Cargando modelo YOLO...")
+            QApplication.processEvents()
+            
+            try:
+                from ultralytics import YOLO
+                self.yolo_model = YOLO(selected_path)
+            except Exception as e:
+                self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
+                return
+
+        reply = QMessageBox.question(
+            self,
+            "Autodetectar Todo el Directorio",
+            f"¿Deseas autodetectar y guardar las etiquetas para las {len(self.m_img_list)} imagenes del directorio?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+
+        total = len(self.m_img_list)
+        import cv2
+        import numpy as np
+
+        for idx, img_path in enumerate(self.m_img_list):
+            self.statusBar().showMessage(f"Autodetectando {idx+1}/{total}: {os.path.basename(img_path)}...")
+            QApplication.processEvents()
+
+            try:
+                self.load_file(img_path)
+                
+                results = self.yolo_model.predict(img_path, conf=0.25, imgsz=1280, verbose=False)
+                if not results:
+                    continue
+                    
+                result = results[0]
+                shapes = []
+                is_segment = hasattr(result, 'masks') and result.masks is not None
+
+                if is_segment:
+                    for mask, box in zip(result.masks.xy, result.boxes):
+                        class_idx = int(box.cls[0].item())
+                        class_name = self.yolo_model.names[class_idx]
+                        
+                        if len(mask) > 4:
+                            pts = np.array(mask, dtype=np.float32).reshape((-1, 1, 2))
+                            hull = cv2.convexHull(pts)
+                            perimeter = cv2.arcLength(hull, True)
+                            approx = cv2.approxPolyDP(hull, 0.008 * perimeter, True)
+                            points = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
+                        else:
+                            points = [(float(pt[0]), float(pt[1])) for pt in mask]
+                            
+                        if len(points) >= 3:
+                            shapes.append((class_name, points, None, None, False, True))
+                else:
+                    for box in result.boxes:
+                        class_idx = int(box.cls[0].item())
+                        class_name = self.yolo_model.names[class_idx]
+                        xyxy = box.xyxy[0].tolist()
+                        x1, y1, x2, y2 = xyxy
+                        points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+                        shapes.append((class_name, points, None, None, False, True))
+
+                if shapes:
+                    self.load_labels(shapes)
+                    self.set_dirty()
+                    self.save_file()
+            except Exception as e:
+                print(f"Error procesando {img_path}: {e}")
+
+        self.statusBar().showMessage(f"¡Autodeteccion por lote completada! Se procesaron {total} imagenes.")
+        QMessageBox.information(self, "Proceso Completado", f"Se han detectado y guardado automaticamente las etiquetas para las {total} imagenes.")
 
 def inverted(color):
     return QColor(*[255 - v for v in color.getRgb()])
