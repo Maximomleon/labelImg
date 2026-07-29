@@ -259,6 +259,10 @@ class MainWindow(QMainWindow, WindowMixin):
                                   'Ctrl+Shift+C', 'resetall', 'Borrar todas las etiquetas de la imagen actual', enabled=False)
         self.addAction(clear_all_labels)
 
+        clear_all_dir_labels = action('Clear Directory Labels (Batch)', self.delete_all_directory_shapes,
+                                      'Ctrl+Alt+C', 'cancel', 'Borrar las etiquetas (.txt) de TODO el directorio', enabled=False)
+        self.addAction(clear_all_dir_labels)
+
         def get_format_meta(format):
             """
             returns a tuple containing (title, icon_name) of the selected format
@@ -410,17 +414,17 @@ class MainWindow(QMainWindow, WindowMixin):
                               zoomActions=zoom_actions,
                               lightBrighten=light_brighten, lightDarken=light_darken, lightOrg=light_org,
                               lightActions=light_actions,
-                              autoDetect=auto_detect, autoDetectAll=auto_detect_all, yoloSettings=yolo_settings, clearAll=clear_all_labels,
+                              autoDetect=auto_detect, autoDetectAll=auto_detect_all, yoloSettings=yolo_settings, clearAll=clear_all_labels, clearAllDir=clear_all_dir_labels,
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
                               beginner=(), advanced=(),
-                              editMenu=(edit, copy, delete, clear_all_labels,
+                              editMenu=(edit, copy, delete, clear_all_labels, clear_all_dir_labels,
                                         None, color1, self.draw_squares_option, auto_detect, auto_detect_all, yolo_settings),
-                              beginnerContext=(create, create_poly, edit, copy, delete, clear_all_labels, auto_detect, auto_detect_all, yolo_settings),
+                              beginnerContext=(create, create_poly, edit, copy, delete, clear_all_labels, clear_all_dir_labels, auto_detect, auto_detect_all, yolo_settings),
                               advancedContext=(create_mode, create_poly_mode, edit_mode, edit, copy,
-                                               delete, clear_all_labels, shape_line_color, shape_fill_color, auto_detect, auto_detect_all, yolo_settings),
+                                               delete, clear_all_labels, clear_all_dir_labels, shape_line_color, shape_fill_color, auto_detect, auto_detect_all, yolo_settings),
                               onLoadActive=(
-                                  close, create, create_poly, create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, clear_all_labels),
+                                  close, create, create_poly, create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, clear_all_labels, clear_all_dir_labels),
                               onShapesPresent=(save_as, hide_all, show_all))
 
         self.menus = Struct(
@@ -1615,6 +1619,44 @@ class MainWindow(QMainWindow, WindowMixin):
         self.update_combo_box()
         self.set_dirty()
         self.statusBar().showMessage("Se eliminaron todas las etiquetas de la imagen actual.")
+
+    def delete_all_directory_shapes(self):
+        if not hasattr(self, 'm_img_list') or not self.m_img_list:
+            self.statusBar().showMessage("No hay imágenes cargadas en el directorio.")
+            return
+
+        total = len(self.m_img_list)
+        reply = QMessageBox.question(
+            self,
+            "Borrar Etiquetas de Todo el Directorio",
+            f"¿Estás seguro de que deseas eliminar permanentemente todas las etiquetas (.txt) de las {total} imágenes del directorio?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        save_dir = self.default_save_dir if (self.default_save_dir and len(ustr(self.default_save_dir))) else None
+
+        for idx, img_path in enumerate(self.m_img_list):
+            base_name = os.path.splitext(os.path.basename(img_path))[0]
+            target_dir = ustr(save_dir) if save_dir else os.path.dirname(img_path)
+
+            txt_path = os.path.join(target_dir, base_name + ".txt")
+            xml_path = os.path.join(target_dir, base_name + ".xml")
+            json_path = os.path.join(target_dir, base_name + ".json")
+
+            for p in [txt_path, xml_path, json_path]:
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception as e:
+                        print(f"Error borrando {p}: {e}")
+
+        self.delete_all_shapes()
+        self.statusBar().showMessage(f"Se eliminaron todas las etiquetas (.txt) de las {total} imágenes del directorio.")
+        QMessageBox.information(self, "Limpieza Completada", f"Se han eliminado todas las etiquetas del directorio ({total} imágenes).")
 
     def discard_changes_dialog(self):
         yes, no, cancel = QMessageBox.Yes, QMessageBox.No, QMessageBox.Cancel
