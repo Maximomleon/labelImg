@@ -1904,12 +1904,17 @@ class MainWindow(QMainWindow, WindowMixin):
         total = len(self.m_img_list)
 
         for idx, img_path in enumerate(self.m_img_list):
-            self.statusBar().showMessage(f"Autodetectando {idx+1}/{total}: {os.path.basename(img_path)}...")
+            self.cur_img_idx = idx
+            if hasattr(self, 'file_list_widget') and self.file_list_widget.count() > idx:
+                self.file_list_widget.setCurrentRow(idx)
+
+            self.load_file(img_path)
+            counter = self.counter_str()
+            self.setWindowTitle(__appname__ + ' ' + img_path + ' ' + counter)
+            self.statusBar().showMessage(f"Autodetectando {counter}: {os.path.basename(img_path)}...")
             QApplication.processEvents()
 
             try:
-                self.load_file(img_path)
-
                 results = self.yolo_model.predict(img_path, conf=conf, imgsz=imgsz, rect=True, verbose=False)
                 if not results:
                     continue
