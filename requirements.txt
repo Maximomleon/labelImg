@@ -1,0 +1,6 @@
+pyqt5
+lxml
+pillow
+ultralytics
+opencv-python
+psutil
