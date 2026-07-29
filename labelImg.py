@@ -1746,7 +1746,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.statusBar().showMessage("Ejecutando autodeteccion...")
             QApplication.processEvents()
             
-            results = self.yolo_model.predict(self.file_path, conf=0.15, imgsz=1280)
+            results = self.yolo_model.predict(self.file_path, conf=0.25, imgsz=1280)
             if not results:
                 self.statusBar().showMessage("No se detecto ningun objeto.")
                 return
@@ -1757,11 +1757,22 @@ class MainWindow(QMainWindow, WindowMixin):
             is_segment = hasattr(result, 'masks') and result.masks is not None
             
             if is_segment:
+                import cv2
+                import numpy as np
                 for mask, box in zip(result.masks.xy, result.boxes):
                     class_idx = int(box.cls[0].item())
                     class_name = self.yolo_model.names[class_idx]
-                    points = [(float(pt[0]), float(pt[1])) for pt in mask]
-                    shapes.append((class_name, points, None, None, False, True))
+                    
+                    if len(mask) > 4:
+                        pts = np.array(mask, dtype=np.float32).reshape((-1, 1, 2))
+                        perimeter = cv2.arcLength(pts, True)
+                        approx = cv2.approxPolyDP(pts, 0.006 * perimeter, True)
+                        points = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
+                    else:
+                        points = [(float(pt[0]), float(pt[1])) for pt in mask]
+                        
+                    if len(points) >= 3:
+                        shapes.append((class_name, points, None, None, False, True))
             else:
                 for box in result.boxes:
                     class_idx = int(box.cls[0].item())
