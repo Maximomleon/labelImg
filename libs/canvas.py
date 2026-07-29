@@ -501,7 +501,8 @@ class Canvas(QWidget):
         if self.selected_shape:
             shape = self.selected_shape
             self.un_highlight(shape)
-            self.shapes.remove(self.selected_shape)
+            if self.selected_shape in self.shapes:
+                self.shapes.remove(self.selected_shape)
             self.selected_shape = None
             self.update()
             return shape
@@ -739,6 +740,7 @@ class Canvas(QWidget):
     def load_shapes(self, shapes):
         self.shapes = list(shapes)
         self.current = None
+        self.selected_shape = None
         self.repaint()
 
     def set_shape_visible(self, shape, value):
