@@ -242,6 +242,9 @@ class MainWindow(QMainWindow, WindowMixin):
         save = action(get_str('save'), self.save_file,
                       'Ctrl+S', 'save', get_str('saveDetail'), enabled=False)
 
+        auto_detect = action('Auto Detect (YOLO)', self.auto_detect_yolo,
+                             'Ctrl+Shift+A', 'verify', 'Auto detect labels using custom YOLO model', enabled=False)
+
         def get_format_meta(format):
             """
             returns a tuple containing (title, icon_name) of the selected format
@@ -393,16 +396,17 @@ class MainWindow(QMainWindow, WindowMixin):
                               zoomActions=zoom_actions,
                               lightBrighten=light_brighten, lightDarken=light_darken, lightOrg=light_org,
                               lightActions=light_actions,
+                              autoDetect=auto_detect,
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
                               beginner=(), advanced=(),
                               editMenu=(edit, copy, delete,
-                                        None, color1, self.draw_squares_option),
-                              beginnerContext=(create, create_poly, edit, copy, delete),
+                                        None, color1, self.draw_squares_option, auto_detect),
+                              beginnerContext=(create, create_poly, edit, copy, delete, auto_detect),
                               advancedContext=(create_mode, create_poly_mode, edit_mode, edit, copy,
-                                               delete, shape_line_color, shape_fill_color),
+                                               delete, shape_line_color, shape_fill_color, auto_detect),
                               onLoadActive=(
-                                  close, create, create_poly, create_mode, create_poly_mode, edit_mode),
+                                  close, create, create_poly, create_mode, create_poly_mode, edit_mode, auto_detect),
                               onShapesPresent=(save_as, hide_all, show_all))
 
         self.menus = Struct(
@@ -453,13 +457,13 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
-            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, copy, delete, None,
+            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, auto_detect, copy, delete, None,
             zoom_in, zoom, zoom_out, fit_window, fit_width, None,
             light_brighten, light, light_darken, light_org)
 
         self.actions.advanced = (
             open, open_dir, change_save_dir, open_next_image, open_prev_image, save, save_format, None,
-            create_mode, create_poly_mode, edit_mode, None,
+            create_mode, create_poly_mode, edit_mode, auto_detect, None,
             hide_all, show_all)
 
         self.statusBar().showMessage('%s started.' % __appname__)
@@ -1702,6 +1706,84 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def toggle_draw_square(self):
         self.canvas.set_drawing_shape_to_square(self.draw_squares_option.isChecked())
+
+    def auto_detect_yolo(self):
+        if self.file_path is None or not os.path.exists(self.file_path):
+            return
+            
+        if not hasattr(self, 'yolo_model') or self.yolo_model is None:
+            # Check standard path locations
+            weights_paths = [
+                "/home/maximo/Descargas/train-6/weights/best.pt",
+                "/home/maximo/Documentos/labels/PAA/yolo26n-seg.pt"
+            ]
+            selected_path = None
+            for wp in weights_paths:
+                if os.path.exists(wp):
+                    selected_path = wp
+                    break
+            
+            if not selected_path:
+                selected_path, _ = QFileDialog.getOpenFileName(self, "Select YOLO weights file (.pt)", "/home/maximo", "Weights (*.pt)")
+                
+            if not selected_path:
+                self.statusBar().showMessage("No se selecciono ningun modelo YOLO.")
+                return
+                
+            self.statusBar().showMessage("Cargando modelo YOLO (esto puede tomar unos segundos)...")
+            QApplication.processEvents()
+            
+            try:
+                from ultralytics import YOLO
+                self.yolo_model = YOLO(selected_path)
+                self.statusBar().showMessage(f"Modelo YOLO cargado: {os.path.basename(selected_path)}")
+            except Exception as e:
+                self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
+                return
+                
+        try:
+            self.statusBar().showMessage("Ejecutando autodeteccion...")
+            QApplication.processEvents()
+            
+            results = self.yolo_model.predict(self.file_path, conf=0.25)
+            if not results:
+                self.statusBar().showMessage("No se detecto ningun objeto.")
+                return
+                
+            result = results[0]
+            shapes = []
+            
+            is_segment = hasattr(result, 'masks') and result.masks is not None
+            
+            if is_segment:
+                for mask, box in zip(result.masks.xy, result.boxes):
+                    class_idx = int(box.cls[0].item())
+                    class_name = self.yolo_model.names[class_idx]
+                    points = [(float(pt[0]), float(pt[1])) for pt in mask]
+                    shapes.append((class_name, points, None, None, False, True))
+            else:
+                for box in result.boxes:
+                    class_idx = int(box.cls[0].item())
+                    class_name = self.yolo_model.names[class_idx]
+                    xyxy = box.xyxy[0].tolist()
+                    x1, y1, x2, y2 = xyxy
+                    points = [
+                        (x1, y1),
+                        (x2, y1),
+                        (x2, y2),
+                        (x1, y2)
+                    ]
+                    shapes.append((class_name, points, None, None, False, False))
+                    
+            if shapes:
+                self.load_labels(shapes)
+                self.set_dirty()
+                self.statusBar().showMessage(f"Autodeteccion finalizada. Se detectaron {len(shapes)} objetos.")
+            else:
+                self.statusBar().showMessage("No se detecto ningun objeto.")
+                
+        except Exception as e:
+            self.statusBar().showMessage(f"Error en la deteccion: {str(e)}")
 
 def inverted(color):
     return QColor(*[255 - v for v in color.getRgb()])
