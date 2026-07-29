@@ -243,7 +243,8 @@ class MainWindow(QMainWindow, WindowMixin):
                       'Ctrl+S', 'save', get_str('saveDetail'), enabled=False)
 
         auto_detect = action('Auto Detect (YOLO)', self.auto_detect_yolo,
-                             'Ctrl+Shift+A', 'verify', 'Auto detect labels using custom YOLO model', enabled=False)
+                             'Ctrl+G', 'verify', 'Auto detect labels using custom YOLO model', enabled=False)
+        self.addAction(auto_detect)
 
         def get_format_meta(format):
             """
