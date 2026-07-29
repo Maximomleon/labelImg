@@ -1752,8 +1752,8 @@ class MainWindow(QMainWindow, WindowMixin):
             max_vertices = 20
             is_convex = False
         elif any(k in c_lower for k in ['green', 'area', 'pasto', 'cesped', 'grass']):
-            max_vertices = 30
-            is_convex = False
+            max_vertices = 20
+            is_convex = True
         else:
             max_vertices = 12
             is_convex = True
