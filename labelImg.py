@@ -573,7 +573,13 @@ class MainWindow(QMainWindow, WindowMixin):
             self.canvas.set_drawing_shape_to_square(False)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Control:
+        if event.key() == Qt.Key_Escape:
+            self.canvas.set_editing(True)
+            self.canvas.restore_cursor()
+            self.actions.create.setEnabled(True)
+            self.actions.create_poly.setEnabled(True)
+            self.statusBar().showMessage("Modo edición activo.")
+        elif event.key() == Qt.Key_Control:
             # Draw rectangle if Ctrl is pressed
             self.canvas.set_drawing_shape_to_square(True)
 
