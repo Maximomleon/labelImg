@@ -31,7 +31,7 @@ class Canvas(QWidget):
     drawingPolygon = pyqtSignal(bool)
     pointClicked = pyqtSignal(QPointF, object)
 
-    CREATE, EDIT = list(range(2))
+    CREATE, EDIT, POINT_DETECT = list(range(3))
 
     epsilon = 24.0
 
@@ -93,11 +93,25 @@ class Canvas(QWidget):
     def editing(self):
         return self.mode == self.EDIT
 
+    def point_detecting(self):
+        return self.mode == self.POINT_DETECT
+
     def set_editing(self, value=True):
         self.mode = self.EDIT if value else self.CREATE
         if not value:  # Create
             self.un_highlight()
             self.de_select_shape()
+        self.prev_point = QPointF()
+        self.repaint()
+
+    def set_point_detecting(self, value=True):
+        self.mode = self.POINT_DETECT if value else self.EDIT
+        if value:
+            self.un_highlight()
+            self.de_select_shape()
+            self.override_cursor(CURSOR_POINT)
+        else:
+            self.restore_cursor()
         self.prev_point = QPointF()
         self.repaint()
 
@@ -273,7 +287,7 @@ class Canvas(QWidget):
         pos = self.transform_pos(ev.pos())
 
         if ev.button() == Qt.LeftButton:
-            if ev.modifiers() & (Qt.ShiftModifier | Qt.AltModifier):
+            if self.point_detecting() or (ev.modifiers() & (Qt.ShiftModifier | Qt.AltModifier)):
                 self.pointClicked.emit(pos, ev.modifiers())
                 return
             if self.drawing():

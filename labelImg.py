@@ -303,6 +303,8 @@ class MainWindow(QMainWindow, WindowMixin):
                         'w', 'new', get_str('crtBoxDetail'), enabled=False)
         create_poly = action("Create\nPolygon", self.create_polygon,
                              'q', 'new', "Draw a polygon", enabled=False)
+        point_detect = action("Point Detect\n(Magic Wand)", self.toggle_point_detect_mode,
+                              'd', 'verify', "Clic en cualquier objeto para autodetectarlo", enabled=False)
         delete = action(get_str('delBox'), self.delete_selected_shape,
                         'Delete', 'delete', get_str('delBoxDetail'), enabled=False)
         copy = action(get_str('dupBox'), self.copy_selected_shape,
@@ -415,17 +417,17 @@ class MainWindow(QMainWindow, WindowMixin):
                               zoomActions=zoom_actions,
                               lightBrighten=light_brighten, lightDarken=light_darken, lightOrg=light_org,
                               lightActions=light_actions,
-                              autoDetect=auto_detect, autoDetectAll=auto_detect_all, yoloSettings=yolo_settings, clearAll=clear_all_labels, clearAllDir=clear_all_dir_labels,
+                              autoDetect=auto_detect, autoDetectAll=auto_detect_all, yoloSettings=yolo_settings, clearAll=clear_all_labels, clearAllDir=clear_all_dir_labels, pointDetect=point_detect,
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
                               beginner=(), advanced=(),
                               editMenu=(edit, copy, delete, clear_all_labels, clear_all_dir_labels,
-                                        None, color1, self.draw_squares_option, auto_detect, auto_detect_all, yolo_settings),
-                              beginnerContext=(create, create_poly, edit, copy, delete, clear_all_labels, clear_all_dir_labels, auto_detect, auto_detect_all, yolo_settings),
+                                        None, color1, self.draw_squares_option, point_detect, auto_detect, auto_detect_all, yolo_settings),
+                              beginnerContext=(create, create_poly, point_detect, edit, copy, delete, clear_all_labels, clear_all_dir_labels, auto_detect, auto_detect_all, yolo_settings),
                               advancedContext=(create_mode, create_poly_mode, edit_mode, edit, copy,
-                                               delete, clear_all_labels, clear_all_dir_labels, shape_line_color, shape_fill_color, auto_detect, auto_detect_all, yolo_settings),
+                                               delete, point_detect, clear_all_labels, clear_all_dir_labels, shape_line_color, shape_fill_color, auto_detect, auto_detect_all, yolo_settings),
                               onLoadActive=(
-                                  close, create, create_poly, create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, clear_all_labels, clear_all_dir_labels),
+                                  close, create, create_poly, point_detect, create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, clear_all_labels, clear_all_dir_labels),
                               onShapesPresent=(save_as, hide_all, show_all))
 
         self.menus = Struct(
@@ -476,13 +478,13 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
-            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, auto_detect, auto_detect_all, yolo_settings, copy, delete, clear_all_labels, None,
+            open, open_dir, change_save_dir, open_next_image, open_prev_image, verify, save, save_format, None, create, create_poly, point_detect, auto_detect, auto_detect_all, yolo_settings, copy, delete, clear_all_labels, None,
             zoom_in, zoom, zoom_out, fit_window, fit_width, None,
             light_brighten, light, light_darken, light_org)
 
         self.actions.advanced = (
             open, open_dir, change_save_dir, open_next_image, open_prev_image, save, save_format, None,
-            create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, yolo_settings, clear_all_labels, None,
+            create_mode, create_poly_mode, point_detect, edit_mode, auto_detect, auto_detect_all, yolo_settings, clear_all_labels, None,
             hide_all, show_all)
 
         self.statusBar().showMessage('%s started.' % __appname__)
@@ -742,6 +744,12 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.draw_polygon_mode = True
         self.actions.create.setEnabled(False)
         self.actions.create_poly.setEnabled(False)
+
+    def toggle_point_detect_mode(self):
+        self.canvas.set_point_detecting(True)
+        self.actions.create.setEnabled(True)
+        self.actions.createPoly.setEnabled(True)
+        self.statusBar().showMessage("Modo Clic Inteligente activo: Haz clic sobre cualquier objeto en la imagen para autodetectarlo.")
 
     def toggle_drawing_sensitive(self, drawing=True):
         """In the middle of drawing, toggling between modes should be disabled."""
@@ -2025,7 +2033,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.repaint()
         self.set_dirty()
 
-    def on_point_clicked(self, pos, modifiers):
+    def on_point_clicked(self, pos, modifiers=None):
         import cv2
         import numpy as np
 
@@ -2033,44 +2041,84 @@ class MainWindow(QMainWindow, WindowMixin):
             return
 
         click_x, click_y = float(pos.x()), float(pos.y())
+        model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
 
-        # Alt+Click: Use OpenCV GrabCut to auto-delineate color/texture boundary around click!
-        if (modifiers & Qt.AltModifier) or not getattr(self, 'yolo_model', None):
-            self.statusBar().showMessage(f"Delineando objeto en punto ({int(click_x)}, {int(click_y)}) con Inteligencia de Color OpenCV...")
-            QApplication.processEvents()
+        # 1. Try YOLO model point matching first if model path exists
+        if model_path and os.path.exists(model_path):
+            if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
+                try:
+                    from ultralytics import YOLO
+                    self.statusBar().showMessage(f"Cargando modelo YOLO ({os.path.basename(model_path)})...")
+                    QApplication.processEvents()
+                    self.yolo_model = YOLO(model_path)
+                    self.loaded_yolo_path = model_path
+                except Exception as e:
+                    self.yolo_model = None
 
-            img = cv2.imread(self.file_path)
-            if img is None:
-                return
+            if getattr(self, 'yolo_model', None) is not None:
+                self.statusBar().showMessage(f"Analizando objeto YOLO en punto ({int(click_x)}, {int(click_y)})...")
+                QApplication.processEvents()
 
-            h, w, _ = img.shape
-            cx, cy = int(click_x), int(click_y)
-            if cx < 0 or cx >= w or cy < 0 or cy >= h:
-                return
+                try:
+                    results = self.yolo_model.predict(self.file_path, conf=0.05, imgsz=1280, rect=True, verbose=False)
+                    if results and hasattr(results[0], 'masks') and results[0].masks is not None:
+                        best_match = None
+                        min_dist = float('inf')
 
-            box_w, box_h = min(300, w // 2), min(300, h // 2)
-            x1, y1 = max(0, cx - box_w // 2), max(0, cy - box_h // 2)
-            x2, y2 = min(w - 1, cx + box_w // 2), min(h - 1, cy + box_h // 2)
+                        for mask_pts, box in zip(results[0].masks.xy, results[0].boxes):
+                            pts_np = np.array(mask_pts, dtype=np.float32)
+                            dist = cv2.pointPolygonTest(pts_np, (click_x, click_y), True)
+                            if dist >= 0:  # Point is inside mask!
+                                best_match = (mask_pts, box)
+                                break
+                            elif abs(dist) < min_dist and abs(dist) < 50:
+                                min_dist = abs(dist)
+                                best_match = (mask_pts, box)
 
-            mask = np.zeros(img.shape[:2], np.uint8)
-            bgdModel = np.zeros((1, 65), np.float64)
-            fgdModel = np.zeros((1, 65), np.float64)
-            rect = (x1, y1, x2 - x1, y2 - y1)
+                        if best_match:
+                            mask_pts, box = best_match
+                            class_idx = int(box.cls[0].item())
+                            class_name = self.yolo_model.names[class_idx]
+                            points = self.format_mask_points(mask_pts, class_name)
+                            self.add_single_polygon(class_name, points)
+                            self.statusBar().showMessage(f"¡{class_name} delineado con éxito en ({int(click_x)}, {int(click_y)})!")
+                            return
+                except Exception as e:
+                    print(f"Error YOLO click: {e}")
 
-            try:
-                cv2.grabCut(img, mask, rect, bgdModel, fgdModel, 3, cv2.GC_INIT_WITH_RECT)
-                mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+        # 2. Fallback to OpenCV GrabCut smart color/edge segmentation around click point!
+        self.statusBar().showMessage(f"Delineando objeto por color/borde en ({int(click_x)}, {int(click_y)})...")
+        QApplication.processEvents()
 
-                contours, _ = cv2.findContours(mask2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                if not contours:
-                    return
+        img = cv2.imread(self.file_path)
+        if img is None:
+            return
 
+        h, w, _ = img.shape
+        cx, cy = int(click_x), int(click_y)
+        if cx < 0 or cx >= w or cy < 0 or cy >= h:
+            return
+
+        box_w, box_h = min(250, w // 2), min(250, h // 2)
+        x1, y1 = max(0, cx - box_w // 2), max(0, cy - box_h // 2)
+        x2, y2 = min(w - 1, cx + box_w // 2), min(h - 1, cy + box_h // 2)
+
+        mask = np.zeros(img.shape[:2], np.uint8)
+        bgdModel = np.zeros((1, 65), np.float64)
+        fgdModel = np.zeros((1, 65), np.float64)
+        rect = (x1, y1, x2 - x1, y2 - y1)
+
+        try:
+            cv2.grabCut(img, mask, rect, bgdModel, fgdModel, 3, cv2.GC_INIT_WITH_RECT)
+            mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+
+            contours, _ = cv2.findContours(mask2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
                 target_contour = None
                 for cnt in contours:
                     if cv2.pointPolygonTest(cnt, (cx, cy), False) >= 0:
                         target_contour = cnt
                         break
-
                 if target_contour is None:
                     target_contour = max(contours, key=cv2.contourArea)
 
@@ -2079,65 +2127,9 @@ class MainWindow(QMainWindow, WindowMixin):
                 points = self.format_mask_points(mask_xy, lbl)
 
                 self.add_single_polygon(lbl, points)
-                self.statusBar().showMessage(f"¡Objeto delineado con exito en ({cx}, {cy})!")
-            except Exception as e:
-                self.statusBar().showMessage(f"Error delineando objeto: {str(e)}")
-            return
-
-        # Shift+Click: Use YOLO Segmentation Model to extract mask containing (click_x, click_y)!
-        model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
-        if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
-            if not model_path or not os.path.exists(model_path):
-                self.open_yolo_settings_dialog()
-                model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
-
-            if not model_path or not os.path.exists(model_path):
-                self.statusBar().showMessage("No se ha seleccionado ningun archivo .pt valido.")
-                return
-
-            self.statusBar().showMessage(f"Cargando modelo YOLO ({os.path.basename(model_path)})...")
-            QApplication.processEvents()
-            try:
-                from ultralytics import YOLO
-                self.yolo_model = YOLO(model_path)
-                self.loaded_yolo_path = model_path
-            except Exception as e:
-                self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
-                return
-
-        conf = float(self.settings.get(SETTING_YOLO_CONF, 0.15))
-        imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
-
-        self.statusBar().showMessage(f"Buscando objeto YOLO en clic ({int(click_x)}, {int(click_y)})...")
-        QApplication.processEvents()
-
-        try:
-            results = self.yolo_model.predict(self.file_path, conf=conf, imgsz=imgsz, rect=True, verbose=False)
-            if not results:
-                return
-
-            result = results[0]
-            if not (hasattr(result, 'masks') and result.masks is not None):
-                self.statusBar().showMessage("El modelo cargado no es de segmentacion (.pt de mascaras).")
-                return
-
-            found = False
-            for mask_pts, box in zip(result.masks.xy, result.boxes):
-                pts_np = np.array(mask_pts, dtype=np.int32)
-                if cv2.pointPolygonTest(pts_np, (click_x, click_y), False) >= 0:
-                    class_idx = int(box.cls[0].item())
-                    class_name = self.yolo_model.names[class_idx]
-                    points = self.format_mask_points(mask_pts, class_name)
-
-                    self.add_single_polygon(class_name, points)
-                    self.statusBar().showMessage(f"¡{class_name} autodetectado en el clic!")
-                    found = True
-                    break
-
-            if not found:
-                self.statusBar().showMessage("Ningun objeto detectado por YOLO en la posicion del clic.")
+                self.statusBar().showMessage(f"¡Objeto delineado con éxito en ({cx}, {cy})!")
         except Exception as e:
-            self.statusBar().showMessage(f"Error en autodeteccion por clic: {str(e)}")
+            self.statusBar().showMessage(f"Error delineando objeto: {str(e)}")
 
 def inverted(color):
     return QColor(*[255 - v for v in color.getRgb()])
