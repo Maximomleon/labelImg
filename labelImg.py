@@ -1717,12 +1717,11 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def load_predefined_classes(self, predef_classes_file):
         if os.path.exists(predef_classes_file) is True:
+            self.label_hist = []
             with codecs.open(predef_classes_file, 'r', 'utf8') as f:
                 for line in f:
                     line = line.strip()
-                    if self.label_hist is None:
-                        self.label_hist = [line]
-                    else:
+                    if line and line not in self.label_hist:
                         self.label_hist.append(line)
 
     def load_pascal_xml_by_filename(self, xml_path):

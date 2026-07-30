@@ -87,8 +87,14 @@ class YOLOWriter:
                 class_index, x_center, y_center, w, h = self.bnd_box_to_yolo_line(box, class_list)
                 out_file.write("%d %.6f %.6f %.6f %.6f\n" % (class_index, x_center, y_center, w, h))
 
+        unique_classes = []
         for c in class_list:
-            out_class_file.write(c+'\n')
+            c_str = str(c).strip()
+            if c_str and c_str not in unique_classes:
+                unique_classes.append(c_str)
+
+        for c in unique_classes:
+            out_class_file.write(c + '\n')
 
         out_class_file.close()
         out_file.close()
