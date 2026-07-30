@@ -204,6 +204,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.shapeMoved.connect(self.set_dirty)
         self.canvas.selectionChanged.connect(self.shape_selection_changed)
         self.canvas.drawingPolygon.connect(self.toggle_drawing_sensitive)
+        self.canvas.pointClicked.connect(self.on_point_clicked)
 
         self.setCentralWidget(scroll)
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock)
@@ -2008,6 +2009,135 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.statusBar().showMessage(f"¡Autodeteccion por lote completada! Se procesaron {total} imagenes.")
         QMessageBox.information(self, "Proceso Completado", f"Se han detectado y guardado automaticamente las etiquetas para las {total} imagenes.")
+
+    def add_single_polygon(self, label, points):
+        color = self.label_color_map(label)
+        shape = Shape(label=label)
+        shape.line_color = color
+        shape.fill_color = color
+        shape.is_polygon = True
+        for x, y in points:
+            shape.add_point(QPointF(x, y))
+        shape.close()
+
+        self.canvas.shapes.append(shape)
+        self.add_label(shape)
+        self.canvas.repaint()
+        self.set_dirty()
+
+    def on_point_clicked(self, pos, modifiers):
+        import cv2
+        import numpy as np
+
+        if self.file_path is None or not os.path.exists(self.file_path):
+            return
+
+        click_x, click_y = float(pos.x()), float(pos.y())
+
+        # Alt+Click: Use OpenCV GrabCut to auto-delineate color/texture boundary around click!
+        if (modifiers & Qt.AltModifier) or not getattr(self, 'yolo_model', None):
+            self.statusBar().showMessage(f"Delineando objeto en punto ({int(click_x)}, {int(click_y)}) con Inteligencia de Color OpenCV...")
+            QApplication.processEvents()
+
+            img = cv2.imread(self.file_path)
+            if img is None:
+                return
+
+            h, w, _ = img.shape
+            cx, cy = int(click_x), int(click_y)
+            if cx < 0 or cx >= w or cy < 0 or cy >= h:
+                return
+
+            box_w, box_h = min(300, w // 2), min(300, h // 2)
+            x1, y1 = max(0, cx - box_w // 2), max(0, cy - box_h // 2)
+            x2, y2 = min(w - 1, cx + box_w // 2), min(h - 1, cy + box_h // 2)
+
+            mask = np.zeros(img.shape[:2], np.uint8)
+            bgdModel = np.zeros((1, 65), np.float64)
+            fgdModel = np.zeros((1, 65), np.float64)
+            rect = (x1, y1, x2 - x1, y2 - y1)
+
+            try:
+                cv2.grabCut(img, mask, rect, bgdModel, fgdModel, 3, cv2.GC_INIT_WITH_RECT)
+                mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+
+                contours, _ = cv2.findContours(mask2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if not contours:
+                    return
+
+                target_contour = None
+                for cnt in contours:
+                    if cv2.pointPolygonTest(cnt, (cx, cy), False) >= 0:
+                        target_contour = cnt
+                        break
+
+                if target_contour is None:
+                    target_contour = max(contours, key=cv2.contourArea)
+
+                mask_xy = target_contour.reshape((-1, 2))
+                lbl = self.default_label if (self.default_label and len(self.default_label)) else "object"
+                points = self.format_mask_points(mask_xy, lbl)
+
+                self.add_single_polygon(lbl, points)
+                self.statusBar().showMessage(f"¡Objeto delineado con exito en ({cx}, {cy})!")
+            except Exception as e:
+                self.statusBar().showMessage(f"Error delineando objeto: {str(e)}")
+            return
+
+        # Shift+Click: Use YOLO Segmentation Model to extract mask containing (click_x, click_y)!
+        model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
+        if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
+            if not model_path or not os.path.exists(model_path):
+                self.open_yolo_settings_dialog()
+                model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
+
+            if not model_path or not os.path.exists(model_path):
+                self.statusBar().showMessage("No se ha seleccionado ningun archivo .pt valido.")
+                return
+
+            self.statusBar().showMessage(f"Cargando modelo YOLO ({os.path.basename(model_path)})...")
+            QApplication.processEvents()
+            try:
+                from ultralytics import YOLO
+                self.yolo_model = YOLO(model_path)
+                self.loaded_yolo_path = model_path
+            except Exception as e:
+                self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
+                return
+
+        conf = float(self.settings.get(SETTING_YOLO_CONF, 0.15))
+        imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
+
+        self.statusBar().showMessage(f"Buscando objeto YOLO en clic ({int(click_x)}, {int(click_y)})...")
+        QApplication.processEvents()
+
+        try:
+            results = self.yolo_model.predict(self.file_path, conf=conf, imgsz=imgsz, rect=True, verbose=False)
+            if not results:
+                return
+
+            result = results[0]
+            if not (hasattr(result, 'masks') and result.masks is not None):
+                self.statusBar().showMessage("El modelo cargado no es de segmentacion (.pt de mascaras).")
+                return
+
+            found = False
+            for mask_pts, box in zip(result.masks.xy, result.boxes):
+                pts_np = np.array(mask_pts, dtype=np.int32)
+                if cv2.pointPolygonTest(pts_np, (click_x, click_y), False) >= 0:
+                    class_idx = int(box.cls[0].item())
+                    class_name = self.yolo_model.names[class_idx]
+                    points = self.format_mask_points(mask_pts, class_name)
+
+                    self.add_single_polygon(class_name, points)
+                    self.statusBar().showMessage(f"¡{class_name} autodetectado en el clic!")
+                    found = True
+                    break
+
+            if not found:
+                self.statusBar().showMessage("Ningun objeto detectado por YOLO en la posicion del clic.")
+        except Exception as e:
+            self.statusBar().showMessage(f"Error en autodeteccion por clic: {str(e)}")
 
 def inverted(color):
     return QColor(*[255 - v for v in color.getRgb()])

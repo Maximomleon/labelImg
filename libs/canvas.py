@@ -29,6 +29,7 @@ class Canvas(QWidget):
     selectionChanged = pyqtSignal(bool)
     shapeMoved = pyqtSignal()
     drawingPolygon = pyqtSignal(bool)
+    pointClicked = pyqtSignal(QPointF, object)
 
     CREATE, EDIT = list(range(2))
 
@@ -272,6 +273,9 @@ class Canvas(QWidget):
         pos = self.transform_pos(ev.pos())
 
         if ev.button() == Qt.LeftButton:
+            if ev.modifiers() & (Qt.ShiftModifier | Qt.AltModifier):
+                self.pointClicked.emit(pos, ev.modifiers())
+                return
             if self.drawing():
                 self.handle_drawing(pos)
             else:
