@@ -2019,7 +2019,7 @@ class MainWindow(QMainWindow, WindowMixin):
         QMessageBox.information(self, "Proceso Completado", f"Se han detectado y guardado automaticamente las etiquetas para las {total} imagenes.")
 
     def add_single_polygon(self, label, points):
-        color = self.label_color_map(label)
+        color = generate_color_by_text(label)
         shape = Shape(label=label)
         shape.line_color = color
         shape.fill_color = color
