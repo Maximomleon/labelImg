@@ -304,7 +304,7 @@ class MainWindow(QMainWindow, WindowMixin):
         create_poly = action("Create\nPolygon", self.create_polygon,
                              'q', 'new', "Draw a polygon", enabled=False)
         point_detect = action("Point Detect\n(Magic Wand)", self.toggle_point_detect_mode,
-                              'd', 'verify', "Clic en cualquier objeto para autodetectarlo", enabled=False)
+                              'e', 'verify', "Clic en cualquier objeto para autodetectarlo", enabled=False)
         delete = action(get_str('delBox'), self.delete_selected_shape,
                         'Delete', 'delete', get_str('delBoxDetail'), enabled=False)
         copy = action(get_str('dupBox'), self.copy_selected_shape,
@@ -748,7 +748,7 @@ class MainWindow(QMainWindow, WindowMixin):
     def toggle_point_detect_mode(self):
         self.canvas.set_point_detecting(True)
         self.actions.create.setEnabled(True)
-        self.actions.createPoly.setEnabled(True)
+        self.actions.create_poly.setEnabled(True)
         self.statusBar().showMessage("Modo Clic Inteligente activo: Haz clic sobre cualquier objeto en la imagen para autodetectarlo.")
 
     def toggle_drawing_sensitive(self, drawing=True):
