@@ -169,11 +169,19 @@ class YoloReader:
             elif len(parts) >= 7 and len(parts) % 2 == 1:
                 class_index = int(parts[0])
                 label = self.classes[class_index]
-                points = []
+                raw_points = []
                 for i in range(1, len(parts), 2):
                     x_norm = float(parts[i])
                     y_norm = float(parts[i+1])
                     x = round(x_norm * self.img_size[1])
                     y = round(y_norm * self.img_size[0])
-                    points.append((x, y))
-                self.shapes.append((label, points, None, None, False, True))
+                    raw_points.append((x, y))
+                
+                # Deduplicate consecutive identical points exported by external web tools!
+                clean_points = []
+                for pt in raw_points:
+                    if not clean_points or pt != clean_points[-1]:
+                        clean_points.append(pt)
+
+                if len(clean_points) >= 3:
+                    self.shapes.append((label, clean_points, None, None, False, True))
