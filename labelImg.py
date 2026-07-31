@@ -1861,6 +1861,40 @@ class MainWindow(QMainWindow, WindowMixin):
 
         return [(float(pt[0]), float(pt[1])) for pt in pts_list]
 
+    def extract_split_contours(self, mask_pts, img_shape, class_name):
+        import cv2
+        import numpy as np
+
+        h, w = img_shape[:2]
+        pts_np = np.array(mask_pts, dtype=np.int32)
+        if len(pts_np) < 3:
+            return []
+
+        mask_img = np.zeros((h, w), dtype=np.uint8)
+        try:
+            cv2.fillPoly(mask_img, [pts_np], 255)
+        except Exception:
+            formatted = self.format_mask_points(mask_pts, class_name)
+            return [formatted] if len(formatted) >= 3 else []
+
+        contours, _ = cv2.findContours(mask_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        shapes_list = []
+
+        for cnt in contours:
+            if cv2.contourArea(cnt) < 80:
+                continue
+            sub_pts = cnt.reshape((-1, 2))
+            formatted = self.format_mask_points(sub_pts, class_name)
+            if len(formatted) >= 3:
+                shapes_list.append(formatted)
+
+        if not shapes_list:
+            formatted = self.format_mask_points(mask_pts, class_name)
+            if len(formatted) >= 3:
+                shapes_list.append(formatted)
+
+        return shapes_list
+
     def auto_detect_yolo(self):
         if self.file_path is None or not os.path.exists(self.file_path):
             return
@@ -1902,12 +1936,13 @@ class MainWindow(QMainWindow, WindowMixin):
             is_segment = hasattr(result, 'masks') and result.masks is not None
 
             if is_segment:
+                img_shape = result.orig_shape
                 for mask, box in zip(result.masks.xy, result.boxes):
                     class_idx = int(box.cls[0].item())
                     class_name = self.yolo_model.names[class_idx]
-                    points = self.format_mask_points(mask, class_name)
-                    if len(points) >= 3:
-                        shapes.append((class_name, points, None, None, False, True))
+                    split_polys = self.extract_split_contours(mask, img_shape, class_name)
+                    for poly in split_polys:
+                        shapes.append((class_name, poly, None, None, False, True))
             else:
                 for box in result.boxes:
                     class_idx = int(box.cls[0].item())
@@ -1988,12 +2023,13 @@ class MainWindow(QMainWindow, WindowMixin):
                 is_segment = hasattr(result, 'masks') and result.masks is not None
 
                 if is_segment:
+                    img_shape = result.orig_shape
                     for mask, box in zip(result.masks.xy, result.boxes):
                         class_idx = int(box.cls[0].item())
                         class_name = self.yolo_model.names[class_idx]
-                        points = self.format_mask_points(mask, class_name)
-                        if len(points) >= 3:
-                            shapes.append((class_name, points, None, None, False, True))
+                        split_polys = self.extract_split_contours(mask, img_shape, class_name)
+                        for poly in split_polys:
+                            shapes.append((class_name, poly, None, None, False, True))
                 else:
                     for box in result.boxes:
                         class_idx = int(box.cls[0].item())
