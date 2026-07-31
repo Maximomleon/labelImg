@@ -31,8 +31,8 @@ class YoloSettingsDialog(QDialog):
 
         # Formulate Recommendation
         if has_cuda:
-            rec_text = "💡 Recomendación: Tu PC cuenta con GPU NVIDIA. Puedes usar modelos **Small (s)** o **Medium (m)** sin pérdida de velocidad."
-            default_rec_scale = "small"
+            rec_text = "💡 Recomendación: Tu PC cuenta con GPU NVIDIA. Puedes usar modelos **Medium (m)**, **Large (l)** o **XLarge (x)** sin pérdida de velocidad."
+            default_rec_scale = "medium"
         else:
             rec_text = "💡 Recomendación: Al usar CPU sin GPU dedicada, se recomienda **Nano (yolo26n-seg)** para inferencia fluida e instantánea."
             default_rec_scale = "nano"
@@ -55,12 +55,18 @@ class YoloSettingsDialog(QDialog):
         self.scale_combo.addItems([
             "Nano (yolo26n-seg) - Ultra Rápido (Recomendado CPU)",
             "Small (yolo26s-seg) - Balanceado",
-            "Medium (yolo26m-seg) - Alta Precisión (Recomendado GPU)"
+            "Medium (yolo26m-seg) - Alta Precisión (Recomendado GPU)",
+            "Large (yolo26l-seg) - Máxima Precisión (GPU 8GB+)",
+            "XLarge (yolo26x-seg) - Máxima Capacidad Neuronal (GPU 12GB+)"
         ])
         
         # Set current scale index
         s_lower = str(scale).lower()
-        if "medium" in s_lower or s_lower == "m":
+        if "xlarge" in s_lower or s_lower == "x":
+            self.scale_combo.setCurrentIndex(4)
+        elif "large" in s_lower or s_lower == "l":
+            self.scale_combo.setCurrentIndex(3)
+        elif "medium" in s_lower or s_lower == "m":
             self.scale_combo.setCurrentIndex(2)
         elif "small" in s_lower or s_lower == "s":
             self.scale_combo.setCurrentIndex(1)
@@ -138,7 +144,8 @@ class YoloSettingsDialog(QDialog):
 
     def get_values(self):
         idx = self.scale_combo.currentIndex()
-        scale_key = "nano" if idx == 0 else ("small" if idx == 1 else "medium")
+        scales = ["nano", "small", "medium", "large", "xlarge"]
+        scale_key = scales[idx] if idx < len(scales) else "medium"
         return {
             "model_path": self.model_line.text().strip(),
             "classes_path": self.classes_line.text().strip(),
