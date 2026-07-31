@@ -1852,8 +1852,8 @@ class MainWindow(QMainWindow, WindowMixin):
 
         pts_list = np.array([(float(pt[0][0]), float(pt[0][1])) for pt in approx], dtype=np.float32)
 
-        # Apply polar angle sorting to guarantee ZERO crossing lines!
-        if len(pts_list) > 3:
+        # Apply polar angle sorting ONLY for convex objects, NOT for concave walkers!
+        if len(pts_list) > 3 and is_convex:
             cx, cy = np.mean(pts_list[:, 0]), np.mean(pts_list[:, 1])
             angles = np.arctan2(pts_list[:, 1] - cy, pts_list[:, 0] - cx)
             sorted_indices = np.argsort(angles)
