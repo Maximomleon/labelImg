@@ -1821,7 +1821,7 @@ class MainWindow(QMainWindow, WindowMixin):
         import cv2
         import numpy as np
 
-        if len(mask) <= 4:
+        if len(mask) <= 3:
             return [(float(pt[0]), float(pt[1])) for pt in mask]
 
         c_lower = class_name.lower()
@@ -1843,14 +1843,23 @@ class MainWindow(QMainWindow, WindowMixin):
         if perimeter == 0:
             return [(float(pt[0]), float(pt[1])) for pt in mask]
 
-        eps_ratio = 0.001
+        eps_ratio = 0.005
         approx = cv2.approxPolyDP(pts, eps_ratio * perimeter, True)
 
         while len(approx) > max_vertices and eps_ratio < 0.1:
-            eps_ratio += 0.001
+            eps_ratio += 0.005
             approx = cv2.approxPolyDP(pts, eps_ratio * perimeter, True)
 
-        return [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
+        pts_list = np.array([(float(pt[0][0]), float(pt[0][1])) for pt in approx], dtype=np.float32)
+
+        # Apply polar angle sorting to guarantee ZERO crossing lines!
+        if len(pts_list) > 3:
+            cx, cy = np.mean(pts_list[:, 0]), np.mean(pts_list[:, 1])
+            angles = np.arctan2(pts_list[:, 1] - cy, pts_list[:, 0] - cx)
+            sorted_indices = np.argsort(angles)
+            pts_list = pts_list[sorted_indices]
+
+        return [(float(pt[0]), float(pt[1])) for pt in pts_list]
 
     def auto_detect_yolo(self):
         if self.file_path is None or not os.path.exists(self.file_path):
@@ -1858,46 +1867,38 @@ class MainWindow(QMainWindow, WindowMixin):
 
         model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
         if not model_path or not os.path.exists(model_path):
-            for wp in ["/home/maximo/Descargas/train-6/weights/best.pt", "/home/maximo/Documentos/labels/PAA/yolo26n-seg.pt"]:
-                if os.path.exists(wp):
-                    model_path = wp
-                    break
+            self.open_yolo_settings_dialog()
+            model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
+
+        if not model_path or not os.path.exists(model_path):
+            self.statusBar().showMessage("No se ha seleccionado ningún archivo .pt válido.")
+            return
+
+        conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
+        imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
 
         if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
-            if not model_path or not os.path.exists(model_path):
-                self.open_yolo_settings_dialog()
-                model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
-
-            if not model_path or not os.path.exists(model_path):
-                self.statusBar().showMessage("No se ha seleccionado ningún archivo .pt válido.")
-                return
-
             self.statusBar().showMessage(f"Cargando modelo YOLO ({os.path.basename(model_path)})...")
             QApplication.processEvents()
             try:
                 from ultralytics import YOLO
                 self.yolo_model = YOLO(model_path)
                 self.loaded_yolo_path = model_path
-                self.statusBar().showMessage(f"Modelo YOLO cargado: {os.path.basename(model_path)}")
             except Exception as e:
                 self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
                 return
 
-        conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
-        imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
+        self.statusBar().showMessage(f"Autodetectando objetos en {os.path.basename(self.file_path)}...")
+        QApplication.processEvents()
 
         try:
-            self.statusBar().showMessage(f"Ejecutando autodeteccion (conf={conf}, imgsz={imgsz})...")
-            QApplication.processEvents()
-
-            results = self.yolo_model.predict(self.file_path, conf=conf, imgsz=imgsz, rect=True)
+            results = self.yolo_model.predict(self.file_path, conf=conf, imgsz=imgsz, rect=True, verbose=False)
             if not results:
-                self.statusBar().showMessage("No se detecto ningun objeto.")
+                self.statusBar().showMessage("No se detectaron objetos en la imagen.")
                 return
 
             result = results[0]
             shapes = []
-
             is_segment = hasattr(result, 'masks') and result.masks is not None
 
             if is_segment:
@@ -1913,45 +1914,33 @@ class MainWindow(QMainWindow, WindowMixin):
                     class_name = self.yolo_model.names[class_idx]
                     xyxy = box.xyxy[0].tolist()
                     x1, y1, x2, y2 = xyxy
-                    points = [
-                        (x1, y1),
-                        (x2, y1),
-                        (x2, y2),
-                        (x1, y2)
-                    ]
+                    points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
                     shapes.append((class_name, points, None, None, False, True))
 
             if shapes:
                 self.load_labels(shapes)
                 self.set_dirty()
-                self.statusBar().showMessage(f"Autodeteccion finalizada. Se detectaron {len(shapes)} objetos.")
+                self.statusBar().showMessage(f"¡Autodetección completada! Se agregaron {len(shapes)} objetos.")
             else:
-                self.statusBar().showMessage("No se detecto ningun objeto.")
-
+                self.statusBar().showMessage("No se encontraron detecciones con la confianza actual.")
         except Exception as e:
-            self.statusBar().showMessage(f"Error en la deteccion: {str(e)}")
+            self.statusBar().showMessage(f"Error en autodetección: {str(e)}")
 
     def auto_detect_all_images(self):
         if not hasattr(self, 'm_img_list') or not self.m_img_list:
-            self.statusBar().showMessage("No hay imagenes cargadas en el directorio.")
+            self.statusBar().showMessage("No hay imágenes cargadas en el directorio.")
             return
 
         model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
         if not model_path or not os.path.exists(model_path):
-            for wp in ["/home/maximo/Descargas/train-6/weights/best.pt", "/home/maximo/Documentos/labels/PAA/yolo26n-seg.pt"]:
-                if os.path.exists(wp):
-                    model_path = wp
-                    break
+            self.open_yolo_settings_dialog()
+            model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
+
+        if not model_path or not os.path.exists(model_path):
+            self.statusBar().showMessage("No se ha seleccionado ningún archivo .pt válido.")
+            return
 
         if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
-            if not model_path or not os.path.exists(model_path):
-                self.open_yolo_settings_dialog()
-                model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
-
-            if not model_path or not os.path.exists(model_path):
-                self.statusBar().showMessage("No se ha seleccionado ningún archivo .pt válido.")
-                return
-
             self.statusBar().showMessage(f"Cargando modelo YOLO ({os.path.basename(model_path)})...")
             QApplication.processEvents()
             try:
@@ -1968,7 +1957,7 @@ class MainWindow(QMainWindow, WindowMixin):
         reply = QMessageBox.question(
             self,
             "Autodetectar Todo el Directorio",
-            f"¿Deseas autodetectar y guardar las etiquetas para las {len(self.m_img_list)} imagenes del directorio?",
+            f"¿Deseas autodetectar y guardar las etiquetas para las {len(self.m_img_list)} imágenes del directorio?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes
         )
@@ -2021,8 +2010,8 @@ class MainWindow(QMainWindow, WindowMixin):
             except Exception as e:
                 print(f"Error procesando {img_path}: {e}")
 
-        self.statusBar().showMessage(f"¡Autodeteccion por lote completada! Se procesaron {total} imagenes.")
-        QMessageBox.information(self, "Proceso Completado", f"Se han detectado y guardado automaticamente las etiquetas para las {total} imagenes.")
+        self.statusBar().showMessage(f"¡Autodetección por lote completada! Se procesaron {total} imágenes.")
+        QMessageBox.information(self, "Proceso Completado", f"Se han detectado y guardado automáticamente las etiquetas para las {total} imágenes.")
 
     def add_single_polygon(self, label, points):
         color = generate_color_by_text(label)
@@ -2092,7 +2081,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 except Exception as e:
                     print(f"Error YOLO click: {e}")
 
-        # 2. Fallback to OpenCV GrabCut smart color/edge segmentation around click point!
+        # 2. Fallback to Adaptive FloodFill smart color/edge segmentation around click point!
         self.statusBar().showMessage(f"Delineando objeto por color/borde en ({int(click_x)}, {int(click_y)})...")
         QApplication.processEvents()
 
@@ -2105,37 +2094,28 @@ class MainWindow(QMainWindow, WindowMixin):
         if cx < 0 or cx >= w or cy < 0 or cy >= h:
             return
 
-        box_w, box_h = min(250, w // 2), min(250, h // 2)
-        x1, y1 = max(0, cx - box_w // 2), max(0, cy - box_h // 2)
-        x2, y2 = min(w - 1, cx + box_w // 2), min(h - 1, cy + box_h // 2)
-
-        mask = np.zeros(img.shape[:2], np.uint8)
-        bgdModel = np.zeros((1, 65), np.float64)
-        fgdModel = np.zeros((1, 65), np.float64)
-        rect = (x1, y1, x2 - x1, y2 - y1)
+        img_blur = cv2.GaussianBlur(img, (5, 5), 0)
+        mask_ff = np.zeros((h + 2, w + 2), np.uint8)
 
         try:
-            cv2.grabCut(img, mask, rect, bgdModel, fgdModel, 3, cv2.GC_INIT_WITH_RECT)
-            mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+            cv2.floodFill(img_blur, mask_ff, (cx, cy), (255, 255, 255), (20, 20, 20), (20, 20, 20), 8 | (255 << 8) | cv2.FLOODFILL_MASK_ONLY)
+            mask_roi = mask_ff[1:-1, 1:-1]
+            contours, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            contours, _ = cv2.findContours(mask2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if contours:
-                target_contour = None
-                for cnt in contours:
-                    if cv2.pointPolygonTest(cnt, (cx, cy), False) >= 0:
-                        target_contour = cnt
-                        break
-                if target_contour is None:
-                    target_contour = max(contours, key=cv2.contourArea)
-
+                target_contour = max(contours, key=cv2.contourArea)
                 mask_xy = target_contour.reshape((-1, 2))
                 lbl = self.default_label if (self.default_label and len(self.default_label)) else "object"
                 points = self.format_mask_points(mask_xy, lbl)
 
-                self.add_single_polygon(lbl, points)
-                self.statusBar().showMessage(f"¡Objeto delineado con éxito en ({cx}, {cy})!")
+                if len(points) >= 3:
+                    self.add_single_polygon(lbl, points)
+                    self.statusBar().showMessage(f"¡Objeto delineado con éxito en ({cx}, {cy})!")
+                    return
         except Exception as e:
-            self.statusBar().showMessage(f"Error delineando objeto: {str(e)}")
+            print(f"Error FloodFill click: {e}")
+
+        self.statusBar().showMessage("No se pudo extraer el objeto en el punto seleccionado.")
 
 def inverted(color):
     return QColor(*[255 - v for v in color.getRgb()])
