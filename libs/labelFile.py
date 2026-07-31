@@ -92,8 +92,13 @@ class LabelFile(object):
         if isinstance(image_data, QImage):
             image = image_data
         else:
-            image = QImage()
-            image.load(image_path)
+            from PyQt5.QtGui import QImageReader
+            reader = QImageReader(image_path)
+            reader.setAutoTransform(True)
+            image = reader.read()
+            if image.isNull():
+                image = QImage(image_path)
+
         image_shape = [image.height(), image.width(),
                        1 if image.isGrayscale() else 3]
         writer = YOLOWriter(img_folder_name, img_file_name,
