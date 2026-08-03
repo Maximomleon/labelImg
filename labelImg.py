@@ -311,6 +311,13 @@ class MainWindow(QMainWindow, WindowMixin):
                       'Ctrl+D', 'copy', get_str('dupBoxDetail'),
                       enabled=False)
 
+        add_vertex = action("Insertar vértice", self.add_vertex,
+                            None, 'new', "Doble clic sobre una arista del polígono para insertar un vértice",
+                            enabled=False)
+        del_vertex = action("Eliminar vértice", self.delete_vertex,
+                            None, 'delete', "Elimina el vértice resaltado del polígono (Backspace)",
+                            enabled=False)
+
         advanced_mode = action(get_str('advancedMode'), self.toggle_advanced_mode,
                                'Ctrl+Shift+A', 'expert', get_str('advancedModeDetail'),
                                checkable=True)
@@ -410,6 +417,7 @@ class MainWindow(QMainWindow, WindowMixin):
         # Store actions for further handling.
         self.actions = Struct(save=save, save_format=save_format, saveAs=save_as, open=open, close=close, resetAll=reset_all, deleteImg=delete_image,
                               lineColor=color1, create=create, create_poly=create_poly, delete=delete, edit=edit, copy=copy,
+                              addVertex=add_vertex, delVertex=del_vertex,
                               createMode=create_mode, createPolyMode=create_poly_mode, editMode=edit_mode, advancedMode=advanced_mode,
                               shapeLineColor=shape_line_color, shapeFillColor=shape_fill_color,
                               zoom=zoom, zoomIn=zoom_in, zoomOut=zoom_out, zoomOrg=zoom_org,
@@ -421,11 +429,11 @@ class MainWindow(QMainWindow, WindowMixin):
                               fileMenuActions=(
                                   open, open_dir, save, save_as, close, reset_all, quit),
                               beginner=(), advanced=(),
-                              editMenu=(edit, copy, delete, clear_all_labels, clear_all_dir_labels,
+                              editMenu=(edit, copy, delete, add_vertex, del_vertex, clear_all_labels, clear_all_dir_labels,
                                         None, color1, self.draw_squares_option, point_detect, auto_detect, auto_detect_all, yolo_settings),
-                              beginnerContext=(create, create_poly, point_detect, edit, copy, delete, clear_all_labels, clear_all_dir_labels, auto_detect, auto_detect_all, yolo_settings),
+                              beginnerContext=(create, create_poly, point_detect, edit, copy, delete, add_vertex, del_vertex, clear_all_labels, clear_all_dir_labels, auto_detect, auto_detect_all, yolo_settings),
                               advancedContext=(create_mode, create_poly_mode, edit_mode, edit, copy,
-                                               delete, point_detect, clear_all_labels, clear_all_dir_labels, shape_line_color, shape_fill_color, auto_detect, auto_detect_all, yolo_settings),
+                                               delete, add_vertex, del_vertex, point_detect, clear_all_labels, clear_all_dir_labels, shape_line_color, shape_fill_color, auto_detect, auto_detect_all, yolo_settings),
                               onLoadActive=(
                                   close, create, create_poly, point_detect, create_mode, create_poly_mode, edit_mode, auto_detect, auto_detect_all, clear_all_labels, clear_all_dir_labels),
                               onShapesPresent=(save_as, hide_all, show_all))
@@ -472,6 +480,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         # Custom context menu for the canvas widget:
         add_actions(self.canvas.menus[0], self.actions.beginnerContext)
+        self.canvas.menus[0].aboutToShow.connect(self.update_vertex_actions)
         add_actions(self.canvas.menus[1], (
             action('&Copy here', self.copy_shape),
             action('&Move here', self.move_shape)))
@@ -1701,6 +1710,27 @@ class MainWindow(QMainWindow, WindowMixin):
         if self.no_shapes():
             for action in self.actions.onShapesPresent:
                 action.setEnabled(False)
+
+    def update_vertex_actions(self):
+        can_add = self.canvas.h_edge is not None
+        h_shape = self.canvas.h_shape
+        can_delete = (self.canvas.h_vertex is not None
+                      and getattr(h_shape, 'is_polygon', False)
+                      and len(h_shape.points) > 3)
+        self.actions.addVertex.setEnabled(can_add)
+        self.actions.delVertex.setEnabled(can_delete)
+
+    def add_vertex(self):
+        if self.canvas.insert_hover_edge_vertex():
+            self.set_dirty()
+        else:
+            self.statusBar().showMessage("No se pudo insertar el vértice: acerca el cursor a una arista del polígono.")
+
+    def delete_vertex(self):
+        if self.canvas.remove_vertex():
+            self.set_dirty()
+        else:
+            self.statusBar().showMessage("No se pudo eliminar el vértice: un polígono necesita al menos 3 puntos.")
 
     def choose_shape_line_color(self):
         color = self.color_dialog.getColor(self.line_color, u'Choose Line Color',
