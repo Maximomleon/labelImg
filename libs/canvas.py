@@ -339,7 +339,7 @@ class Canvas(QWidget):
                 self.override_cursor(CURSOR_GRAB)
         elif ev.button() == Qt.LeftButton:
             pos = self.transform_pos(ev.pos())
-            if self.drawing():
+            if self.drawing() and not self.draw_polygon_mode:
                 self.handle_drawing(pos)
             else:
                 # pan
@@ -475,7 +475,7 @@ class Canvas(QWidget):
             clipped_y = min(max(0, pos.y()), size.height())
             pos = QPointF(clipped_x, clipped_y)
 
-        if self.draw_square:
+        if self.draw_square and not getattr(shape, 'is_polygon', False):
             opposite_point_index = (index + 2) % 4
             opposite_point = shape[opposite_point_index]
 
