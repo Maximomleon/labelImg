@@ -1824,42 +1824,20 @@ class MainWindow(QMainWindow, WindowMixin):
         if len(mask) <= 3:
             return [(float(pt[0]), float(pt[1])) for pt in mask]
 
-        c_lower = class_name.lower()
-        if 'walker' in c_lower:
-            max_vertices = 20
-            is_convex = False
-        elif any(k in c_lower for k in ['green', 'area', 'pasto', 'cesped', 'grass']):
-            max_vertices = 20
-            is_convex = True
-        else:
-            max_vertices = 12
-            is_convex = True
-
         pts = np.array(mask, dtype=np.float32).reshape((-1, 1, 2))
-        if is_convex:
-            pts = cv2.convexHull(pts)
 
+        # Mild noise filtering (eps = 0.001 * perimeter) to eliminate redundant collinear pixel noise while preserving ALL detail points!
         perimeter = cv2.arcLength(pts, True)
-        if perimeter == 0:
+        if perimeter > 0:
+            approx = cv2.approxPolyDP(pts, 0.001 * perimeter, True)
+            pts_list = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
+        else:
+            pts_list = [(float(pt[0]), float(pt[1])) for pt in mask]
+
+        if len(pts_list) < 3:
             return [(float(pt[0]), float(pt[1])) for pt in mask]
 
-        eps_ratio = 0.005
-        approx = cv2.approxPolyDP(pts, eps_ratio * perimeter, True)
-
-        while len(approx) > max_vertices and eps_ratio < 0.1:
-            eps_ratio += 0.005
-            approx = cv2.approxPolyDP(pts, eps_ratio * perimeter, True)
-
-        pts_list = np.array([(float(pt[0][0]), float(pt[0][1])) for pt in approx], dtype=np.float32)
-
-        # Apply polar angle sorting ONLY for convex objects, NOT for concave walkers!
-        if len(pts_list) > 3 and is_convex:
-            cx, cy = np.mean(pts_list[:, 0]), np.mean(pts_list[:, 1])
-            angles = np.arctan2(pts_list[:, 1] - cy, pts_list[:, 0] - cx)
-            sorted_indices = np.argsort(angles)
-            pts_list = pts_list[sorted_indices]
-
-        return [(float(pt[0]), float(pt[1])) for pt in pts_list]
+        return pts_list
 
     def extract_split_contours(self, mask_pts, img_shape, class_name):
         import cv2

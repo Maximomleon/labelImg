@@ -96,6 +96,7 @@ class Shape(object):
             painter.setPen(pen)
 
             line_path = QPainterPath()
+            line_path.setFillRule(Qt.WindingFill)
             vertex_path = QPainterPath()
 
             line_path.moveTo(self.points[0])
