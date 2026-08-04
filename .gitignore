@@ -8,6 +8,13 @@ labelImg.egg-info*
 build/
 dist/
 
+# Virtual environments
+venv/
+.venv/
+
+# Model weights
+*.pt
+
 tags
 cscope*
 .ycm_extra_conf.py

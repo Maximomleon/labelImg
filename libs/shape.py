@@ -9,7 +9,7 @@ except ImportError:
     from PyQt4.QtGui import *
     from PyQt4.QtCore import *
 
-from libs.utils import distance
+from libs.utils import distance, distance_to_segment
 import sys
 
 DEFAULT_LINE_COLOR = QColor(0, 255, 0, 128)
@@ -80,6 +80,36 @@ class Shape(object):
         if self.points:
             return self.points.pop()
         return None
+
+    def insert_point(self, index, point):
+        self.points.insert(index, point)
+
+    def remove_point(self, index):
+        if len(self.points) <= 3:
+            return False
+        self.points.pop(index)
+        return True
+
+    def nearest_edge(self, point, epsilon):
+        """Find the closest edge to point within epsilon.
+
+        Returns (insert_index, projected_point) or None. insert_index is
+        where the new vertex should be inserted to keep the contour order.
+        """
+        if not self.is_polygon or len(self.points) < 2:
+            return None
+        best = None
+        n = len(self.points)
+        last = n if self.is_closed() else n - 1
+        for i in range(last):
+            a = self.points[i]
+            b = self.points[(i + 1) % n]
+            dist, proj = distance_to_segment(point, a, b)
+            if dist <= epsilon and (best is None or dist < best[0]):
+                best = (dist, i + 1, proj)
+        if best is None:
+            return None
+        return best[1], best[2]
 
     def is_closed(self):
         return self._closed

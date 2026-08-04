@@ -74,6 +74,18 @@ def distance(p):
     return sqrt(p.x() * p.x() + p.y() * p.y())
 
 
+def distance_to_segment(p, a, b):
+    """Distance from point p to segment a-b, and the closest point on it."""
+    seg = b - a
+    seg_len_sq = seg.x() * seg.x() + seg.y() * seg.y()
+    if seg_len_sq == 0:
+        return distance(p - a), QPointF(a)
+    t = QPointF.dotProduct(p - a, seg)
+    t = max(0.0, min(1.0, t / seg_len_sq))
+    projection = QPointF(a.x() + t * seg.x(), a.y() + t * seg.y())
+    return distance(p - projection), projection
+
+
 def format_shortcut(text):
     mod, key = text.split('+', 1)
     return '<b>%s</b>+<b>%s</b>' % (mod, key)

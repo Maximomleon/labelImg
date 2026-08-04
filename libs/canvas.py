@@ -34,6 +34,7 @@ class Canvas(QWidget):
     CREATE, EDIT, POINT_DETECT = list(range(3))
 
     epsilon = 24.0
+    edge_epsilon = 12.0
 
     def __init__(self, *args, **kwargs):
         super(Canvas, self).__init__(*args, **kwargs)
@@ -57,6 +58,7 @@ class Canvas(QWidget):
         self.hide_background = False
         self.h_shape = None
         self.h_vertex = None
+        self.h_edge = None
         self._painter = QPainter()
         self._cursor = CURSOR_DEFAULT
         # Menus:
@@ -120,6 +122,7 @@ class Canvas(QWidget):
             if self.h_shape:
                 self.h_shape.highlight_clear()
             self.h_vertex = self.h_shape = None
+            self.h_edge = None
 
     def selected_vertex(self):
         return self.h_vertex is not None
@@ -248,9 +251,21 @@ class Canvas(QWidget):
                 if self.selected_vertex():
                     self.h_shape.highlight_clear()
                 self.h_vertex, self.h_shape = index, shape
+                self.h_edge = None
                 shape.highlight_vertex(index, shape.MOVE_VERTEX)
                 self.override_cursor(CURSOR_POINT)
                 self.setToolTip("Click & drag to move point")
+                self.setStatusTip(self.toolTip())
+                self.update()
+                break
+            edge = shape.nearest_edge(pos, self.edge_epsilon)
+            if edge is not None:
+                if self.selected_vertex():
+                    self.h_shape.highlight_clear()
+                self.h_vertex, self.h_shape = None, shape
+                self.h_edge = (shape, edge[0], edge[1])
+                self.override_cursor(CURSOR_DRAW)
+                self.setToolTip("Doble clic para insertar vértice")
                 self.setStatusTip(self.toolTip())
                 self.update()
                 break
@@ -258,6 +273,7 @@ class Canvas(QWidget):
                 if self.selected_vertex():
                     self.h_shape.highlight_clear()
                 self.h_vertex, self.h_shape = None, shape
+                self.h_edge = None
                 self.setToolTip(
                     "Click & drag to move shape '%s'" % shape.label)
                 self.setStatusTip(self.toolTip())
@@ -281,6 +297,7 @@ class Canvas(QWidget):
                 self.h_shape.highlight_clear()
                 self.update()
             self.h_vertex, self.h_shape = None, None
+            self.h_edge = None
             self.override_cursor(CURSOR_DEFAULT)
 
     def mousePressEvent(self, ev):
@@ -322,7 +339,7 @@ class Canvas(QWidget):
                 self.override_cursor(CURSOR_GRAB)
         elif ev.button() == Qt.LeftButton:
             pos = self.transform_pos(ev.pos())
-            if self.drawing():
+            if self.drawing() and not self.draw_polygon_mode:
                 self.handle_drawing(pos)
             else:
                 # pan
@@ -400,6 +417,9 @@ class Canvas(QWidget):
         if self.can_close_shape() and len(self.current) > 3:
             self.current.pop_point()
             self.finalise()
+        elif self.editing():
+            pos = self.transform_pos(ev.pos())
+            self.add_vertex_at(pos)
 
     def select_shape(self, shape):
         self.de_select_shape()
@@ -455,7 +475,7 @@ class Canvas(QWidget):
             clipped_y = min(max(0, pos.y()), size.height())
             pos = QPointF(clipped_x, clipped_y)
 
-        if self.draw_square:
+        if self.draw_square and not getattr(shape, 'is_polygon', False):
             opposite_point_index = (index + 2) % 4
             opposite_point = shape[opposite_point_index]
 
@@ -524,6 +544,50 @@ class Canvas(QWidget):
             self.selected_shape = None
             self.update()
             return shape
+
+    def _insert_vertex(self, shape, insert_index, point):
+        shape.insert_point(insert_index, point)
+        self.select_shape(shape)
+        shape.highlight_vertex(insert_index, Shape.MOVE_VERTEX)
+        self.h_vertex, self.h_shape = insert_index, shape
+        self.h_edge = None
+        self.shapeMoved.emit()
+        self.update()
+
+    def add_vertex_at(self, pos):
+        """Insert a vertex on the nearest polygon edge under pos. Returns bool."""
+        candidates = [self.selected_shape] if self.selected_shape else []
+        candidates += [s for s in reversed(self.shapes) if self.isVisible(s)]
+        for shape in candidates:
+            if shape is None or not getattr(shape, 'is_polygon', False):
+                continue
+            edge = shape.nearest_edge(pos, self.edge_epsilon)
+            if edge is not None:
+                self._insert_vertex(shape, edge[0], edge[1])
+                return True
+        return False
+
+    def insert_hover_edge_vertex(self):
+        """Insert a vertex on the edge currently highlighted by hover (context menu use). Returns bool."""
+        if self.h_edge is None:
+            return False
+        shape, insert_index, proj = self.h_edge
+        self._insert_vertex(shape, insert_index, proj)
+        return True
+
+    def remove_vertex(self):
+        """Remove the currently hovered/selected vertex. Returns bool."""
+        if self.h_vertex is None or self.h_shape is None:
+            return False
+        shape = self.h_shape
+        if not getattr(shape, 'is_polygon', False):
+            return False
+        if not shape.remove_point(self.h_vertex):
+            return False
+        self.un_highlight(shape)
+        self.shapeMoved.emit()
+        self.update()
+        return True
 
     def copy_selected_shape(self):
         if self.selected_shape:
@@ -696,6 +760,8 @@ class Canvas(QWidget):
             self.move_one_pixel('Up')
         elif key == Qt.Key_Down and self.selected_shape:
             self.move_one_pixel('Down')
+        elif key == Qt.Key_Backspace and self.selected_vertex():
+            self.remove_vertex()
 
     def move_one_pixel(self, direction):
         # print(self.selectedShape.points)
