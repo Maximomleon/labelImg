@@ -18,6 +18,16 @@ CURSOR_DRAW = Qt.CrossCursor
 CURSOR_MOVE = Qt.ClosedHandCursor
 CURSOR_GRAB = Qt.OpenHandCursor
 
+# HUD badge geometry / timing
+HUD_MARGIN = 10
+HUD_PADDING_X = 10
+HUD_PADDING_Y = 5
+HUD_SPACING = 6
+HUD_RADIUS = 6
+HUD_HOLD_MS = 1500      # how long the light badge stays fully visible
+HUD_FADE_INTERVAL = 30  # ms between fade steps
+HUD_FADE_STEP = 0.06
+
 # class Canvas(QGLWidget):
 
 
@@ -25,6 +35,7 @@ class Canvas(QWidget):
     zoomRequest = pyqtSignal(int)
     lightRequest = pyqtSignal(int)
     scrollRequest = pyqtSignal(int, int)
+    panRequest = pyqtSignal(int, int)
     newShape = pyqtSignal()
     selectionChanged = pyqtSignal(bool)
     shapeMoved = pyqtSignal()
@@ -73,9 +84,53 @@ class Canvas(QWidget):
         # initialisation for panning
         self.pan_initial_pos = QPoint()
 
+        # Illustrator-style space+drag panning. Works regardless of the
+        # current tool/mode (editing, drawing, mid-polygon), and takes
+        # priority over whatever a plain click would normally do.
+        self.space_pan_active = False
+        self.is_panning = False
+        self.pan_last_pos = QPoint()
+
+        # HUD badges (zoom / light) painted on the top-right of the visible area
+        self.zoom_value = 100
+        self.light_value = 50
+        self._light_badge_opacity = 0.0
+        self._light_fade_timer = QTimer(self)
+        self._light_fade_timer.setInterval(HUD_FADE_INTERVAL)
+        self._light_fade_timer.timeout.connect(self._fade_light_badge)
+        self._light_hold_timer = QTimer(self)
+        self._light_hold_timer.setSingleShot(True)
+        self._light_hold_timer.setInterval(HUD_HOLD_MS)
+        self._light_hold_timer.timeout.connect(self._light_fade_timer.start)
+
     def set_drawing_color(self, qcolor):
         self.drawing_line_color = qcolor
         self.drawing_rect_color = qcolor
+
+    def set_zoom_value(self, value):
+        """Zoom badge is permanent, so it only needs the current value."""
+        self.zoom_value = int(value)
+
+    def set_light_value(self, value):
+        """Light badge pops up on change and fades out, unless light is altered."""
+        value = int(value)
+        changed = value != self.light_value
+        self.light_value = value
+        if changed:
+            self._light_badge_opacity = 1.0
+            self._light_fade_timer.stop()
+            self._light_hold_timer.start()
+
+    def _fade_light_badge(self):
+        # A non-neutral light level keeps the badge on screen as a reminder.
+        if self.light_value != 50:
+            self._light_fade_timer.stop()
+            return
+        self._light_badge_opacity -= HUD_FADE_STEP
+        if self._light_badge_opacity <= 0.0:
+            self._light_badge_opacity = 0.0
+            self._light_fade_timer.stop()
+        self.update()
 
     def enterEvent(self, ev):
         self.override_cursor(self._cursor)
@@ -129,6 +184,18 @@ class Canvas(QWidget):
 
     def mouseMoveEvent(self, ev):
         """Update line with last point and current coordinates."""
+        if self.is_panning:
+            current = ev.pos()
+            delta = current - self.pan_last_pos
+            self.pan_last_pos = current
+            self.panRequest.emit(delta.x(), delta.y())
+            return
+        if self.space_pan_active:
+            # Hovering with space held: keep the hand cursor and skip the
+            # usual shape/vertex highlighting so it doesn't fight for the cursor.
+            self.override_cursor(CURSOR_GRAB)
+            return
+
         pos = self.transform_pos(ev.pos())
 
         # Update coordinates in status bar if image is opened
@@ -164,7 +231,7 @@ class Canvas(QWidget):
                     self.override_cursor(CURSOR_POINT)
                     self.current.highlight_vertex(0, Shape.NEAR_VERTEX)
 
-                if self.draw_square:
+                if self.draw_square and not self.draw_polygon_mode:
                     init_pos = self.current[0]
                     min_x = init_pos.x()
                     min_y = init_pos.y()
@@ -301,6 +368,12 @@ class Canvas(QWidget):
             self.override_cursor(CURSOR_DEFAULT)
 
     def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton and self.space_pan_active:
+            self.is_panning = True
+            self.pan_last_pos = ev.pos()
+            self.override_cursor(CURSOR_MOVE)
+            return
+
         pos = self.transform_pos(ev.pos())
 
         if ev.button() == Qt.LeftButton:
@@ -324,6 +397,16 @@ class Canvas(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, ev):
+        if ev.button() == Qt.LeftButton and self.is_panning:
+            self.is_panning = False
+            # Keep the hand cursor if space is still held; otherwise pop the
+            # override entirely so the cursor stack doesn't leak a level.
+            if self.space_pan_active:
+                self.override_cursor(CURSOR_GRAB)
+            else:
+                self.restore_cursor()
+            return
+
         if ev.button() == Qt.RightButton:
             menu = self.menus[bool(self.selected_shape_copy)]
             self.restore_cursor()
@@ -659,6 +742,10 @@ class Canvas(QWidget):
             p.drawLine(int(self.prev_point.x()), 0, int(self.prev_point.x()), int(self.pixmap.height()))
             p.drawLine(0, int(self.prev_point.y()), int(self.pixmap.width()), int(self.prev_point.y()))
 
+        # HUD badges are drawn in widget coordinates, so drop the zoom transform.
+        p.resetTransform()
+        self._draw_hud(p)
+
         self.setAutoFillBackground(True)
         if self.verified:
             pal = self.palette()
@@ -670,6 +757,60 @@ class Canvas(QWidget):
             self.setPalette(pal)
 
         p.end()
+
+    def _draw_hud(self, p):
+        """Paint the zoom / light badges anchored to the top-right of the visible area.
+
+        The canvas widget is larger than the scroll area viewport when zoomed in,
+        so anchoring to self.rect() would push the badges off screen. The visible
+        region keeps them pinned to the corner the user is actually looking at.
+        """
+        viewport = self.visibleRegion().boundingRect()
+        if viewport.isEmpty():
+            return
+
+        font = QFont()
+        font.setPointSize(9)
+        font.setBold(True)
+        p.setFont(font)
+        metrics = QFontMetrics(font)
+
+        badges = [(u'⌕ %d %%' % self.zoom_value, self._zoom_badge_color(), 1.0)]
+
+        light_opacity = 1.0 if self.light_value != 50 else self._light_badge_opacity
+        if light_opacity > 0.0:
+            badges.append((u'☀ %d %%' % self.light_value,
+                           QColor(255, 176, 32), light_opacity))
+
+        y = viewport.top() + HUD_MARGIN
+        for text, color, opacity in badges:
+            text_rect = metrics.boundingRect(text)
+            width = text_rect.width() + 2 * HUD_PADDING_X
+            height = metrics.height() + 2 * HUD_PADDING_Y
+            x = viewport.right() - HUD_MARGIN - width
+            self._draw_badge(p, QRect(int(x), int(y), int(width), int(height)),
+                             text, color, opacity)
+            y += height + HUD_SPACING
+
+    def _zoom_badge_color(self):
+        if self.zoom_value > 100:
+            return QColor(94, 196, 122)   # zoomed in
+        if self.zoom_value < 100:
+            return QColor(240, 173, 78)   # zoomed out
+        return QColor(210, 210, 210)      # 1:1
+
+    def _draw_badge(self, p, rect, text, color, opacity):
+        p.save()
+        p.setOpacity(opacity)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(24, 24, 24, 200))
+        p.drawRoundedRect(rect, HUD_RADIUS, HUD_RADIUS)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 140), 1))
+        p.drawRoundedRect(rect, HUD_RADIUS, HUD_RADIUS)
+        p.setPen(color)
+        p.drawText(rect, Qt.AlignCenter, text)
+        p.restore()
 
     def transform_pos(self, point):
         """Convert from widget-logical coordinates to painter-logical coordinates."""
@@ -745,6 +886,12 @@ class Canvas(QWidget):
 
     def keyPressEvent(self, ev):
         key = ev.key()
+        if key == Qt.Key_Space and not ev.isAutoRepeat():
+            self.space_pan_active = True
+            if not self.is_panning:
+                self.override_cursor(CURSOR_GRAB)
+            ev.accept()
+            return
         if key == Qt.Key_Escape and self.current:
             print('ESC press')
             self.current = None
@@ -762,6 +909,14 @@ class Canvas(QWidget):
             self.move_one_pixel('Down')
         elif key == Qt.Key_Backspace and self.selected_vertex():
             self.remove_vertex()
+
+    def keyReleaseEvent(self, ev):
+        key = ev.key()
+        if key == Qt.Key_Space and not ev.isAutoRepeat():
+            self.space_pan_active = False
+            if not self.is_panning:
+                self.restore_cursor()
+            ev.accept()
 
     def move_one_pixel(self, direction):
         # print(self.selectedShape.points)
