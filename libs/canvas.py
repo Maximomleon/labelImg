@@ -35,6 +35,7 @@ class Canvas(QWidget):
     zoomRequest = pyqtSignal(int)
     lightRequest = pyqtSignal(int)
     scrollRequest = pyqtSignal(int, int)
+    panRequest = pyqtSignal(int, int)
     newShape = pyqtSignal()
     selectionChanged = pyqtSignal(bool)
     shapeMoved = pyqtSignal()
@@ -82,6 +83,13 @@ class Canvas(QWidget):
 
         # initialisation for panning
         self.pan_initial_pos = QPoint()
+
+        # Illustrator-style space+drag panning. Works regardless of the
+        # current tool/mode (editing, drawing, mid-polygon), and takes
+        # priority over whatever a plain click would normally do.
+        self.space_pan_active = False
+        self.is_panning = False
+        self.pan_last_pos = QPoint()
 
         # HUD badges (zoom / light) painted on the top-right of the visible area
         self.zoom_value = 100
@@ -176,6 +184,18 @@ class Canvas(QWidget):
 
     def mouseMoveEvent(self, ev):
         """Update line with last point and current coordinates."""
+        if self.is_panning:
+            current = ev.pos()
+            delta = current - self.pan_last_pos
+            self.pan_last_pos = current
+            self.panRequest.emit(delta.x(), delta.y())
+            return
+        if self.space_pan_active:
+            # Hovering with space held: keep the hand cursor and skip the
+            # usual shape/vertex highlighting so it doesn't fight for the cursor.
+            self.override_cursor(CURSOR_GRAB)
+            return
+
         pos = self.transform_pos(ev.pos())
 
         # Update coordinates in status bar if image is opened
@@ -348,6 +368,12 @@ class Canvas(QWidget):
             self.override_cursor(CURSOR_DEFAULT)
 
     def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton and self.space_pan_active:
+            self.is_panning = True
+            self.pan_last_pos = ev.pos()
+            self.override_cursor(CURSOR_MOVE)
+            return
+
         pos = self.transform_pos(ev.pos())
 
         if ev.button() == Qt.LeftButton:
@@ -371,6 +397,16 @@ class Canvas(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, ev):
+        if ev.button() == Qt.LeftButton and self.is_panning:
+            self.is_panning = False
+            # Keep the hand cursor if space is still held; otherwise pop the
+            # override entirely so the cursor stack doesn't leak a level.
+            if self.space_pan_active:
+                self.override_cursor(CURSOR_GRAB)
+            else:
+                self.restore_cursor()
+            return
+
         if ev.button() == Qt.RightButton:
             menu = self.menus[bool(self.selected_shape_copy)]
             self.restore_cursor()
@@ -850,6 +886,12 @@ class Canvas(QWidget):
 
     def keyPressEvent(self, ev):
         key = ev.key()
+        if key == Qt.Key_Space and not ev.isAutoRepeat():
+            self.space_pan_active = True
+            if not self.is_panning:
+                self.override_cursor(CURSOR_GRAB)
+            ev.accept()
+            return
         if key == Qt.Key_Escape and self.current:
             print('ESC press')
             self.current = None
@@ -867,6 +909,14 @@ class Canvas(QWidget):
             self.move_one_pixel('Down')
         elif key == Qt.Key_Backspace and self.selected_vertex():
             self.remove_vertex()
+
+    def keyReleaseEvent(self, ev):
+        key = ev.key()
+        if key == Qt.Key_Space and not ev.isAutoRepeat():
+            self.space_pan_active = False
+            if not self.is_panning:
+                self.restore_cursor()
+            ev.accept()
 
     def move_one_pixel(self, direction):
         # print(self.selectedShape.points)

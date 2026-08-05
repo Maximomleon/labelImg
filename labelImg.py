@@ -201,6 +201,7 @@ class MainWindow(QMainWindow, WindowMixin):
         }
         self.scroll_area = scroll
         self.canvas.scrollRequest.connect(self.scroll_request)
+        self.canvas.panRequest.connect(self.pan_request)
 
         # The HUD badges are anchored to the visible region, so a partial repaint
         # on scroll would smear them. Force a full canvas repaint instead.
@@ -246,7 +247,7 @@ class MainWindow(QMainWindow, WindowMixin):
                                  'a', 'prev', get_str('prevImgDetail'))
 
         verify = action(get_str('verifyImg'), self.verify_image,
-                        'space', 'verify', get_str('verifyImgDetail'))
+                        'v', 'verify', get_str('verifyImgDetail'))
 
         save = action(get_str('save'), self.save_file,
                       'Ctrl+S', 'save', get_str('saveDetail'), enabled=False)
@@ -1089,6 +1090,18 @@ class MainWindow(QMainWindow, WindowMixin):
         units = - delta / (8 * 15)
         bar = self.scroll_bars[orientation]
         bar.setValue(int(bar.value() + bar.singleStep() * units))
+
+    def pan_request(self, dx, dy):
+        """Space+drag panning: move the viewport by raw drag pixels, 1:1.
+
+        Unlike scroll_request (tuned for 15-degree wheel notches), this uses
+        the actual mouse delta so a click-drag pans the canvas like Illustrator's
+        hand tool rather than the image sliding far more slowly than the cursor.
+        """
+        h_bar = self.scroll_bars[Qt.Horizontal]
+        v_bar = self.scroll_bars[Qt.Vertical]
+        h_bar.setValue(h_bar.value() - dx)
+        v_bar.setValue(v_bar.value() - dy)
 
     def set_zoom(self, value):
         self.actions.fitWidth.setChecked(False)
