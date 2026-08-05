@@ -48,6 +48,8 @@ from libs.create_ml_io import JSON_EXT
 from libs.ustr import ustr
 from libs.hashableQListWidgetItem import HashableQListWidgetItem
 from libs.yoloSettingsDialog import YoloSettingsDialog
+from libs.yoloWorker import YoloWorker
+from libs.detectionProgressDialog import DetectionProgressDialog
 
 __appname__ = 'labelImg'
 
@@ -511,6 +513,14 @@ class MainWindow(QMainWindow, WindowMixin):
         self.fit_window = False
         # Add Chris
         self.difficult = False
+
+        # Async YOLO autodetection state
+        self.detection_thread = None
+        self.detection_worker = None
+        self.detection_dialog = None
+        self.detection_on_image = None
+        self.detection_on_done = None
+        self.detected_shape_count = 0
 
         # Fix the compatible issue for qt4 and qt5. Convert the QStringList to python list
         if settings.get(SETTING_RECENT_FILES):
@@ -1903,10 +1913,8 @@ class MainWindow(QMainWindow, WindowMixin):
 
         return shapes_list
 
-    def auto_detect_yolo(self):
-        if self.file_path is None or not os.path.exists(self.file_path):
-            return
-
+    def resolve_yolo_model_path(self):
+        """Return a usable .pt path, prompting for one if needed."""
         model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
         if not model_path or not os.path.exists(model_path):
             self.open_yolo_settings_dialog()
@@ -1914,88 +1922,33 @@ class MainWindow(QMainWindow, WindowMixin):
 
         if not model_path or not os.path.exists(model_path):
             self.statusBar().showMessage("No se ha seleccionado ningún archivo .pt válido.")
+            return None
+        return model_path
+
+    def auto_detect_yolo(self):
+        if self.file_path is None or not os.path.exists(self.file_path):
+            return
+        if getattr(self, 'detection_thread', None) is not None:
             return
 
-        conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
-        imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
+        model_path = self.resolve_yolo_model_path()
+        if model_path is None:
+            return
 
-        if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
-            self.statusBar().showMessage(f"Cargando modelo YOLO ({os.path.basename(model_path)})...")
-            QApplication.processEvents()
-            try:
-                from ultralytics import YOLO
-                self.yolo_model = YOLO(model_path)
-                self.loaded_yolo_path = model_path
-            except Exception as e:
-                self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
-                return
-
-        self.statusBar().showMessage(f"Autodetectando objetos en {os.path.basename(self.file_path)}...")
-        QApplication.processEvents()
-
-        try:
-            results = self.yolo_model.predict(self.file_path, conf=conf, imgsz=imgsz, rect=True, verbose=False)
-            if not results:
-                self.statusBar().showMessage("No se detectaron objetos en la imagen.")
-                return
-
-            result = results[0]
-            shapes = []
-            is_segment = hasattr(result, 'masks') and result.masks is not None
-
-            if is_segment:
-                img_shape = result.orig_shape
-                for mask, box in zip(result.masks.xy, result.boxes):
-                    class_idx = int(box.cls[0].item())
-                    class_name = self.yolo_model.names[class_idx]
-                    split_polys = self.extract_split_contours(mask, img_shape, class_name)
-                    for poly in split_polys:
-                        shapes.append((class_name, poly, None, None, False, True))
-            else:
-                for box in result.boxes:
-                    class_idx = int(box.cls[0].item())
-                    class_name = self.yolo_model.names[class_idx]
-                    xyxy = box.xyxy[0].tolist()
-                    x1, y1, x2, y2 = xyxy
-                    points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
-                    shapes.append((class_name, points, None, None, False, True))
-
-            if shapes:
-                self.load_labels(shapes)
-                self.set_dirty()
-                self.statusBar().showMessage(f"¡Autodetección completada! Se agregaron {len(shapes)} objetos.")
-            else:
-                self.statusBar().showMessage("No se encontraron detecciones con la confianza actual.")
-        except Exception as e:
-            self.statusBar().showMessage(f"Error en autodetección: {str(e)}")
+        self.detected_shape_count = 0
+        self.start_detection([self.file_path], model_path,
+                             self.on_detection_single, self.on_detection_single_done)
 
     def auto_detect_all_images(self):
         if not hasattr(self, 'm_img_list') or not self.m_img_list:
             self.statusBar().showMessage("No hay imágenes cargadas en el directorio.")
             return
-
-        model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
-        if not model_path or not os.path.exists(model_path):
-            self.open_yolo_settings_dialog()
-            model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
-
-        if not model_path or not os.path.exists(model_path):
-            self.statusBar().showMessage("No se ha seleccionado ningún archivo .pt válido.")
+        if getattr(self, 'detection_thread', None) is not None:
             return
 
-        if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
-            self.statusBar().showMessage(f"Cargando modelo YOLO ({os.path.basename(model_path)})...")
-            QApplication.processEvents()
-            try:
-                from ultralytics import YOLO
-                self.yolo_model = YOLO(model_path)
-                self.loaded_yolo_path = model_path
-            except Exception as e:
-                self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
-                return
-
-        conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
-        imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
+        model_path = self.resolve_yolo_model_path()
+        if model_path is None:
+            return
 
         reply = QMessageBox.question(
             self,
@@ -2008,55 +1961,116 @@ class MainWindow(QMainWindow, WindowMixin):
         if reply != QMessageBox.Yes:
             return
 
-        total = len(self.m_img_list)
+        self.detected_shape_count = 0
+        self.start_detection(list(self.m_img_list), model_path,
+                             self.on_detection_batch, self.on_detection_batch_done)
 
-        for idx, img_path in enumerate(self.m_img_list):
-            self.cur_img_idx = idx
-            if hasattr(self, 'file_list_widget') and self.file_list_widget.count() > idx:
-                self.file_list_widget.setCurrentRow(idx)
+    def start_detection(self, image_paths, model_path, on_image, on_done):
+        """Run YOLO on a worker thread behind a modal progress dialog.
 
-            self.load_file(img_path)
-            counter = self.counter_str()
-            self.setWindowTitle(__appname__ + ' ' + img_path + ' ' + counter)
-            self.statusBar().showMessage(f"Autodetectando {counter}: {os.path.basename(img_path)}...")
-            QApplication.processEvents()
+        Inference used to block the GUI thread, which made an empty result
+        indistinguishable from a run still in progress.
+        """
+        conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
+        imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
 
-            try:
-                results = self.yolo_model.predict(img_path, conf=conf, imgsz=imgsz, rect=True, verbose=False)
-                if not results:
-                    continue
+        self.detection_on_image = on_image
+        self.detection_on_done = on_done
 
-                result = results[0]
-                shapes = []
-                is_segment = hasattr(result, 'masks') and result.masks is not None
+        self.detection_dialog = DetectionProgressDialog(len(image_paths), self)
+        self.detection_thread = QThread(self)
+        self.detection_worker = YoloWorker(model_path, image_paths, conf, imgsz,
+                                           contour_extractor=self.extract_split_contours)
+        # Reuse an already loaded model so repeated runs skip the load phase.
+        if getattr(self, 'loaded_yolo_path', None) == model_path:
+            self.detection_worker.model = getattr(self, 'yolo_model', None)
+        self.detection_worker.moveToThread(self.detection_thread)
 
-                if is_segment:
-                    img_shape = result.orig_shape
-                    for mask, box in zip(result.masks.xy, result.boxes):
-                        class_idx = int(box.cls[0].item())
-                        class_name = self.yolo_model.names[class_idx]
-                        split_polys = self.extract_split_contours(mask, img_shape, class_name)
-                        for poly in split_polys:
-                            shapes.append((class_name, poly, None, None, False, True))
-                else:
-                    for box in result.boxes:
-                        class_idx = int(box.cls[0].item())
-                        class_name = self.yolo_model.names[class_idx]
-                        xyxy = box.xyxy[0].tolist()
-                        x1, y1, x2, y2 = xyxy
-                        points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
-                        shapes.append((class_name, points, None, None, False, True))
+        self.detection_thread.started.connect(self.detection_worker.run)
+        self.detection_worker.modelLoading.connect(self.detection_dialog.on_model_loading)
+        self.detection_worker.modelLoaded.connect(self.detection_dialog.on_model_loaded)
+        self.detection_worker.modelLoaded.connect(self.on_detection_model_loaded)
+        self.detection_worker.imageStarted.connect(self.detection_dialog.on_image_started)
+        self.detection_worker.imageFinished.connect(self.detection_dialog.on_image_finished)
+        self.detection_worker.imageFinished.connect(self.on_detection_image_finished)
+        self.detection_worker.failed.connect(self.on_detection_failed)
+        self.detection_worker.finished.connect(self.on_detection_finished)
+        # Direct connection on purpose: the worker thread is busy inside its
+        # own loop and never returns to its event loop, so a queued abort()
+        # would only arrive after the batch already finished.
+        self.detection_dialog.cancelled.connect(self.detection_worker.abort,
+                                                Qt.DirectConnection)
 
-                if shapes:
-                    self.load_labels(shapes)
-                    self.set_dirty()
-                    self.save_file()
-            except Exception as e:
-                print(f"Error procesando {img_path}: {e}")
+        self.actions.autoDetect.setEnabled(False)
+        self.actions.autoDetectAll.setEnabled(False)
 
-        self.statusBar().showMessage(f"¡Autodetección por lote completada! Se procesaron {total} imágenes.")
-        QMessageBox.information(self, "Proceso Completado", f"Se han detectado y guardado automáticamente las etiquetas para las {total} imágenes.")
+        self.detection_thread.start()
+        self.detection_dialog.exec_()
 
+    def on_detection_model_loaded(self):
+        self.yolo_model = self.detection_worker.model
+        self.loaded_yolo_path = self.detection_worker.model_path
+
+    def on_detection_image_finished(self, idx, img_path, shapes):
+        try:
+            self.detection_on_image(idx, img_path, shapes)
+        except Exception as e:
+            print(f"Error aplicando detecciones de {img_path}: {e}")
+        finally:
+            # Always release the worker, otherwise the run would stall here.
+            self.detection_worker.ack()
+
+    def on_detection_single(self, idx, img_path, shapes):
+        self.detected_shape_count = len(shapes)
+        if shapes:
+            self.load_labels(shapes)
+            self.set_dirty()
+
+    def on_detection_batch(self, idx, img_path, shapes):
+        self.cur_img_idx = idx
+        if hasattr(self, 'file_list_widget') and self.file_list_widget.count() > idx:
+            self.file_list_widget.setCurrentRow(idx)
+
+        self.load_file(img_path)
+        self.setWindowTitle(__appname__ + ' ' + img_path + ' ' + self.counter_str())
+
+        if shapes:
+            self.detected_shape_count += len(shapes)
+            self.load_labels(shapes)
+            self.set_dirty()
+            self.save_file()
+
+    def on_detection_single_done(self, processed):
+        if self.detection_worker.is_aborted():
+            return "Autodetección cancelada."
+        if processed == 0:
+            return "La autodetección falló."
+        if self.detected_shape_count:
+            return f"¡Autodetección completada! Se agregaron {self.detected_shape_count} objetos."
+        return "Sin detecciones con la confianza actual."
+
+    def on_detection_batch_done(self, processed):
+        head = "Lote cancelado." if self.detection_worker.is_aborted() else "¡Lote completado!"
+        return (f"{head} {processed} imágenes procesadas, "
+                f"{self.detected_shape_count} objetos detectados.")
+
+    def on_detection_failed(self, message):
+        self.statusBar().showMessage(message)
+
+    def on_detection_finished(self, processed):
+        summary = self.detection_on_done(processed)
+        self.statusBar().showMessage(summary)
+        self.detection_dialog.on_finished(summary)
+
+        self.detection_thread.quit()
+        self.detection_thread.wait()
+        self.detection_thread.deleteLater()
+        self.detection_thread = None
+        self.detection_worker = None
+
+        enabled = self.file_path is not None
+        self.actions.autoDetect.setEnabled(enabled)
+        self.actions.autoDetectAll.setEnabled(enabled)
     def add_single_polygon(self, label, points):
         color = generate_color_by_text(label)
         shape = Shape(label=label)
