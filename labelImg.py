@@ -174,8 +174,14 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.file_list_widget = QListWidget()
         self.file_list_widget.itemDoubleClicked.connect(self.file_item_double_clicked)
+        self.file_list_counter_label = QLabel("0 / 0 etiquetadas")
+        self.file_list_counter_label.setAlignment(Qt.AlignCenter)
+        counter_font = self.file_list_counter_label.font()
+        counter_font.setBold(True)
+        self.file_list_counter_label.setFont(counter_font)
         file_list_layout = QVBoxLayout()
         file_list_layout.setContentsMargins(0, 0, 0, 0)
+        file_list_layout.addWidget(self.file_list_counter_label)
         file_list_layout.addWidget(self.file_list_widget)
         file_list_container = QWidget()
         file_list_container.setLayout(file_list_layout)
@@ -1388,6 +1394,46 @@ class MainWindow(QMainWindow, WindowMixin):
         if self.may_continue():
             self.load_file(filename)
 
+    LABELED_ITEM_COLOR = QColor(46, 160, 67)
+
+    def get_annotation_candidate_paths(self, img_path):
+        """Every path where this image's annotation could live, across formats.
+
+        Mirrors the target-dir resolution used by save_file/delete_all_directory_shapes:
+        default_save_dir takes priority over the image's own directory.
+        """
+        save_dir = self.default_save_dir if (self.default_save_dir and len(ustr(self.default_save_dir))) else None
+        target_dir = ustr(save_dir) if save_dir else os.path.dirname(img_path)
+        base_name = os.path.splitext(os.path.basename(img_path))[0]
+        return [os.path.join(target_dir, base_name + ext) for ext in (TXT_EXT, XML_EXT, JSON_EXT)]
+
+    def is_image_labeled(self, img_path):
+        return any(os.path.isfile(p) for p in self.get_annotation_candidate_paths(img_path))
+
+    def _default_file_item_color(self):
+        return self.file_list_widget.palette().color(QPalette.Text)
+
+    def mark_file_item_status(self, index):
+        """Paint one file-list row green/default and return whether it's labeled."""
+        if index < 0 or index >= self.file_list_widget.count():
+            return False
+        item = self.file_list_widget.item(index)
+        labeled = self.is_image_labeled(self.m_img_list[index])
+        item.setForeground(self.LABELED_ITEM_COLOR if labeled else self._default_file_item_color())
+        item.setToolTip("Etiquetada" if labeled else "Sin etiquetar")
+        return labeled
+
+    def update_file_list_counter(self):
+        total = self.file_list_widget.count()
+        labeled = sum(1 for idx in range(total) if self.is_image_labeled(self.m_img_list[idx]))
+        self.file_list_counter_label.setText(f"{labeled} / {total} etiquetadas")
+
+    def refresh_file_list_status(self):
+        """Recolor every row and refresh the '25 / 150' counter."""
+        for idx in range(self.file_list_widget.count()):
+            self.mark_file_item_status(idx)
+        self.update_file_list_counter()
+
     def scan_all_images(self, folder_path):
         extensions = ['.%s' % fmt.data().decode("ascii").lower() for fmt in QImageReader.supportedImageFormats()]
         images = []
@@ -1483,6 +1529,7 @@ class MainWindow(QMainWindow, WindowMixin):
         for imgPath in self.m_img_list:
             item = QListWidgetItem(imgPath)
             self.file_list_widget.addItem(item)
+        self.refresh_file_list_status()
 
     def verify_image(self, _value=False):
         # Proceeding next image without dialog if having any label
@@ -1616,6 +1663,9 @@ class MainWindow(QMainWindow, WindowMixin):
             self.set_clean()
             self.statusBar().showMessage('Saved to  %s' % annotation_file_path)
             self.statusBar().show()
+            if self.file_path in self.m_img_list:
+                self.mark_file_item_status(self.m_img_list.index(self.file_path))
+                self.update_file_list_counter()
 
     def close_file(self, _value=False):
         if not self.may_continue():
@@ -1709,6 +1759,7 @@ class MainWindow(QMainWindow, WindowMixin):
                         print(f"Error borrando {p}: {e}")
 
         self.delete_all_shapes()
+        self.refresh_file_list_status()
         self.statusBar().showMessage(f"Se eliminaron todas las etiquetas (.txt) de las {total} imágenes del directorio.")
         QMessageBox.information(self, "Limpieza Completada", f"Se han eliminado todas las etiquetas del directorio ({total} imágenes).")
 
@@ -2091,6 +2142,7 @@ class MainWindow(QMainWindow, WindowMixin):
         enabled = self.file_path is not None
         self.actions.autoDetect.setEnabled(enabled)
         self.actions.autoDetectAll.setEnabled(enabled)
+
     def add_single_polygon(self, label, points):
         color = generate_color_by_text(label)
         shape = Shape(label=label)
