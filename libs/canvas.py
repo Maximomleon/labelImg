@@ -231,7 +231,7 @@ class Canvas(QWidget):
                     self.override_cursor(CURSOR_POINT)
                     self.current.highlight_vertex(0, Shape.NEAR_VERTEX)
 
-                if self.draw_square:
+                if self.draw_square and not self.draw_polygon_mode:
                     init_pos = self.current[0]
                     min_x = init_pos.x()
                     min_y = init_pos.y()
