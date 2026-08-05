@@ -1512,6 +1512,9 @@ class MainWindow(QMainWindow, WindowMixin):
         self.last_open_dir = target_dir_path
         self.import_dir_images(target_dir_path)
         self.default_save_dir = target_dir_path
+        # import_dir_images() already colored the file list, but it did so before
+        # default_save_dir pointed at this directory, so every row looked unlabeled.
+        self.refresh_file_list_status()
         if self.file_path:
             self.show_bounding_box_from_annotation_file(file_path=self.file_path)
 
