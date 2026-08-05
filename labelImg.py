@@ -202,6 +202,11 @@ class MainWindow(QMainWindow, WindowMixin):
         self.scroll_area = scroll
         self.canvas.scrollRequest.connect(self.scroll_request)
 
+        # The HUD badges are anchored to the visible region, so a partial repaint
+        # on scroll would smear them. Force a full canvas repaint instead.
+        for _bar in self.scroll_bars.values():
+            _bar.valueChanged.connect(self.canvas.update)
+
         self.canvas.newShape.connect(self.new_shape)
         self.canvas.shapeMoved.connect(self.set_dirty)
         self.canvas.selectionChanged.connect(self.shape_selection_changed)
@@ -1305,6 +1310,8 @@ class MainWindow(QMainWindow, WindowMixin):
         assert not self.image.isNull(), "cannot paint null image"
         self.canvas.scale = 0.01 * self.zoom_widget.value()
         self.canvas.overlay_color = self.light_widget.color()
+        self.canvas.set_zoom_value(self.zoom_widget.value())
+        self.canvas.set_light_value(self.light_widget.value())
         self.canvas.label_font_size = int(0.02 * max(self.image.width(), self.image.height()))
         self.canvas.adjustSize()
         self.canvas.update()

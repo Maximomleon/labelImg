@@ -18,6 +18,16 @@ CURSOR_DRAW = Qt.CrossCursor
 CURSOR_MOVE = Qt.ClosedHandCursor
 CURSOR_GRAB = Qt.OpenHandCursor
 
+# HUD badge geometry / timing
+HUD_MARGIN = 10
+HUD_PADDING_X = 10
+HUD_PADDING_Y = 5
+HUD_SPACING = 6
+HUD_RADIUS = 6
+HUD_HOLD_MS = 1500      # how long the light badge stays fully visible
+HUD_FADE_INTERVAL = 30  # ms between fade steps
+HUD_FADE_STEP = 0.06
+
 # class Canvas(QGLWidget):
 
 
@@ -73,9 +83,46 @@ class Canvas(QWidget):
         # initialisation for panning
         self.pan_initial_pos = QPoint()
 
+        # HUD badges (zoom / light) painted on the top-right of the visible area
+        self.zoom_value = 100
+        self.light_value = 50
+        self._light_badge_opacity = 0.0
+        self._light_fade_timer = QTimer(self)
+        self._light_fade_timer.setInterval(HUD_FADE_INTERVAL)
+        self._light_fade_timer.timeout.connect(self._fade_light_badge)
+        self._light_hold_timer = QTimer(self)
+        self._light_hold_timer.setSingleShot(True)
+        self._light_hold_timer.setInterval(HUD_HOLD_MS)
+        self._light_hold_timer.timeout.connect(self._light_fade_timer.start)
+
     def set_drawing_color(self, qcolor):
         self.drawing_line_color = qcolor
         self.drawing_rect_color = qcolor
+
+    def set_zoom_value(self, value):
+        """Zoom badge is permanent, so it only needs the current value."""
+        self.zoom_value = int(value)
+
+    def set_light_value(self, value):
+        """Light badge pops up on change and fades out, unless light is altered."""
+        value = int(value)
+        changed = value != self.light_value
+        self.light_value = value
+        if changed:
+            self._light_badge_opacity = 1.0
+            self._light_fade_timer.stop()
+            self._light_hold_timer.start()
+
+    def _fade_light_badge(self):
+        # A non-neutral light level keeps the badge on screen as a reminder.
+        if self.light_value != 50:
+            self._light_fade_timer.stop()
+            return
+        self._light_badge_opacity -= HUD_FADE_STEP
+        if self._light_badge_opacity <= 0.0:
+            self._light_badge_opacity = 0.0
+            self._light_fade_timer.stop()
+        self.update()
 
     def enterEvent(self, ev):
         self.override_cursor(self._cursor)
@@ -659,6 +706,10 @@ class Canvas(QWidget):
             p.drawLine(int(self.prev_point.x()), 0, int(self.prev_point.x()), int(self.pixmap.height()))
             p.drawLine(0, int(self.prev_point.y()), int(self.pixmap.width()), int(self.prev_point.y()))
 
+        # HUD badges are drawn in widget coordinates, so drop the zoom transform.
+        p.resetTransform()
+        self._draw_hud(p)
+
         self.setAutoFillBackground(True)
         if self.verified:
             pal = self.palette()
@@ -670,6 +721,60 @@ class Canvas(QWidget):
             self.setPalette(pal)
 
         p.end()
+
+    def _draw_hud(self, p):
+        """Paint the zoom / light badges anchored to the top-right of the visible area.
+
+        The canvas widget is larger than the scroll area viewport when zoomed in,
+        so anchoring to self.rect() would push the badges off screen. The visible
+        region keeps them pinned to the corner the user is actually looking at.
+        """
+        viewport = self.visibleRegion().boundingRect()
+        if viewport.isEmpty():
+            return
+
+        font = QFont()
+        font.setPointSize(9)
+        font.setBold(True)
+        p.setFont(font)
+        metrics = QFontMetrics(font)
+
+        badges = [(u'⌕ %d %%' % self.zoom_value, self._zoom_badge_color(), 1.0)]
+
+        light_opacity = 1.0 if self.light_value != 50 else self._light_badge_opacity
+        if light_opacity > 0.0:
+            badges.append((u'☀ %d %%' % self.light_value,
+                           QColor(255, 176, 32), light_opacity))
+
+        y = viewport.top() + HUD_MARGIN
+        for text, color, opacity in badges:
+            text_rect = metrics.boundingRect(text)
+            width = text_rect.width() + 2 * HUD_PADDING_X
+            height = metrics.height() + 2 * HUD_PADDING_Y
+            x = viewport.right() - HUD_MARGIN - width
+            self._draw_badge(p, QRect(int(x), int(y), int(width), int(height)),
+                             text, color, opacity)
+            y += height + HUD_SPACING
+
+    def _zoom_badge_color(self):
+        if self.zoom_value > 100:
+            return QColor(94, 196, 122)   # zoomed in
+        if self.zoom_value < 100:
+            return QColor(240, 173, 78)   # zoomed out
+        return QColor(210, 210, 210)      # 1:1
+
+    def _draw_badge(self, p, rect, text, color, opacity):
+        p.save()
+        p.setOpacity(opacity)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(24, 24, 24, 200))
+        p.drawRoundedRect(rect, HUD_RADIUS, HUD_RADIUS)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 140), 1))
+        p.drawRoundedRect(rect, HUD_RADIUS, HUD_RADIUS)
+        p.setPen(color)
+        p.drawText(rect, Qt.AlignCenter, text)
+        p.restore()
 
     def transform_pos(self, point):
         """Convert from widget-logical coordinates to painter-logical coordinates."""
