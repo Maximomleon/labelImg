@@ -2118,6 +2118,11 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.repaint()
         self.set_dirty()
 
+    def on_point_clicked(self, pos, modifiers=None):
+        if pos is not None:
+            click_x, click_y = float(pos.x()), float(pos.y())
+            self.yolo_segment_hover_click(click_x, click_y)
+
     def yolo_segment_hover_click(self, click_x, click_y):
         import cv2
         import numpy as np
