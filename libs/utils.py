@@ -127,3 +127,40 @@ if QT5:
 else:
     def trimmed(text):
         return text.trimmed()
+
+
+def log_autodetect_error(context_message, exception_obj):
+    import sys
+    import os
+    import datetime
+    import traceback
+
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    tb_str = "".join(traceback.format_exception(type(exception_obj), exception_obj, exception_obj.__traceback__))
+
+    log_entry = (
+        f"\n==================================================\n"
+        f"[{timestamp}] AUTODETECT ERROR in: {context_message}\n"
+        f"Exception: {str(exception_obj)}\n"
+        f"Traceback:\n{tb_str}"
+        f"==================================================\n"
+    )
+
+    sys.stderr.write(log_entry)
+    sys.stderr.flush()
+
+    log_paths = ["autodetect_error.log"]
+    try:
+        home_log = os.path.join(os.path.expanduser("~"), "autodetect_error.log")
+        log_paths.append(home_log)
+    except Exception:
+        pass
+
+    for log_path in log_paths:
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(log_entry)
+        except Exception:
+            pass
+
+    return log_entry

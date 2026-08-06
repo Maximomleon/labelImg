@@ -55,6 +55,8 @@ class YoloWorker(QObject):
                 self.model = YOLO(self.model_path)
                 self.modelLoaded.emit()
         except Exception as e:
+            from libs.utils import log_autodetect_error
+            log_autodetect_error("YoloWorker model loading (%s)" % self.model_path, e)
             self.failed.emit("Error cargando YOLO: %s" % str(e))
             self.finished.emit(0)
             return
@@ -75,6 +77,8 @@ class YoloWorker(QObject):
             try:
                 shapes = self._predict(img_path)
             except Exception as e:
+                from libs.utils import log_autodetect_error
+                log_autodetect_error("YoloWorker predict (%s)" % img_path, e)
                 self.failed.emit("Error procesando %s: %s"
                                  % (os.path.basename(img_path), str(e)))
                 continue

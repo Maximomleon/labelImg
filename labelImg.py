@@ -2131,7 +2131,10 @@ class MainWindow(QMainWindow, WindowMixin):
                 f"{self.detected_shape_count} objetos detectados.")
 
     def on_detection_failed(self, message):
+        from libs.utils import log_autodetect_error
+        log_autodetect_error("YOLO Autodetection Failed", Exception(message))
         self.statusBar().showMessage(message)
+        QMessageBox.warning(self, "Error en Autodetección", f"{message}\n\nSe ha registrado el error completo en 'autodetect_error.log'.")
 
     def on_detection_finished(self, processed):
         summary = self.detection_on_done(processed)
@@ -2166,6 +2169,7 @@ class MainWindow(QMainWindow, WindowMixin):
     def on_point_clicked(self, pos, modifiers=None):
         import cv2
         import numpy as np
+        from libs.utils import log_autodetect_error
 
         if self.file_path is None or not os.path.exists(self.file_path):
             return
@@ -2175,6 +2179,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         # 1. Try YOLO model point matching first if model path exists
         if model_path and os.path.exists(model_path):
+            model_path = os.path.normpath(model_path)
             if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
                 try:
                     from ultralytics import YOLO
@@ -2183,6 +2188,7 @@ class MainWindow(QMainWindow, WindowMixin):
                     self.yolo_model = YOLO(model_path)
                     self.loaded_yolo_path = model_path
                 except Exception as e:
+                    log_autodetect_error(f"Carga Modelo YOLO Click ({model_path})", e)
                     self.yolo_model = None
 
             if getattr(self, 'yolo_model', None) is not None:
@@ -2190,49 +2196,51 @@ class MainWindow(QMainWindow, WindowMixin):
                 QApplication.processEvents()
 
                 try:
-                    results = self.yolo_model.predict(self.file_path, conf=0.05, imgsz=1280, rect=True, verbose=False)
-                    if results and hasattr(results[0], 'masks') and results[0].masks is not None:
-                        best_match = None
-                        min_dist = float('inf')
+                    img = self.cv2_imread_utf8(self.file_path)
+                    if img is not None:
+                        results = self.yolo_model.predict(img, conf=0.05, imgsz=1280, rect=True, verbose=False, workers=0)
+                        if results and hasattr(results[0], 'masks') and results[0].masks is not None:
+                            best_match = None
+                            min_dist = float('inf')
 
-                        for mask_pts, box in zip(results[0].masks.xy, results[0].boxes):
-                            pts_np = np.array(mask_pts, dtype=np.float32)
-                            dist = cv2.pointPolygonTest(pts_np, (click_x, click_y), True)
-                            if dist >= 0:  # Point is inside mask!
-                                best_match = (mask_pts, box)
-                                break
-                            elif abs(dist) < min_dist and abs(dist) < 50:
-                                min_dist = abs(dist)
-                                best_match = (mask_pts, box)
+                            for mask_pts, box in zip(results[0].masks.xy, results[0].boxes):
+                                pts_np = np.array(mask_pts, dtype=np.float32)
+                                dist = cv2.pointPolygonTest(pts_np, (click_x, click_y), True)
+                                if dist >= 0:  # Point is inside mask!
+                                    best_match = (mask_pts, box)
+                                    break
+                                elif abs(dist) < min_dist and abs(dist) < 50:
+                                    min_dist = abs(dist)
+                                    best_match = (mask_pts, box)
 
-                        if best_match:
-                            mask_pts, box = best_match
-                            class_idx = int(box.cls[0].item())
-                            class_name = self.yolo_model.names[class_idx]
-                            points = self.format_mask_points(mask_pts, class_name)
-                            self.add_single_polygon(class_name, points)
-                            self.statusBar().showMessage(f"¡{class_name} delineado con éxito en ({int(click_x)}, {int(click_y)})!")
-                            return
+                            if best_match:
+                                mask_pts, box = best_match
+                                class_idx = int(box.cls[0].item())
+                                class_name = self.get_yolo_class_name(class_idx)
+                                points = self.format_mask_points(mask_pts, class_name)
+                                self.add_single_polygon(class_name, points)
+                                self.statusBar().showMessage(f"¡{class_name} delineado con éxito en ({int(click_x)}, {int(click_y)})!")
+                                return
                 except Exception as e:
-                    print(f"Error YOLO click: {e}")
+                    log_autodetect_error(f"Inferencia YOLO Click ({self.file_path})", e)
 
         # 2. Fallback to Adaptive FloodFill smart color/edge segmentation around click point!
         self.statusBar().showMessage(f"Delineando objeto por color/borde en ({int(click_x)}, {int(click_y)})...")
         QApplication.processEvents()
 
-        img = cv2.imread(self.file_path)
-        if img is None:
-            return
-
-        h, w, _ = img.shape
-        cx, cy = int(click_x), int(click_y)
-        if cx < 0 or cx >= w or cy < 0 or cy >= h:
-            return
-
-        img_blur = cv2.GaussianBlur(img, (5, 5), 0)
-        mask_ff = np.zeros((h + 2, w + 2), np.uint8)
-
         try:
+            img = self.cv2_imread_utf8(self.file_path)
+            if img is None:
+                return
+
+            h, w, _ = img.shape
+            cx, cy = int(click_x), int(click_y)
+            if cx < 0 or cx >= w or cy < 0 or cy >= h:
+                return
+
+            img_blur = cv2.GaussianBlur(img, (5, 5), 0)
+            mask_ff = np.zeros((h + 2, w + 2), np.uint8)
+
             cv2.floodFill(img_blur, mask_ff, (cx, cy), (255, 255, 255), (20, 20, 20), (20, 20, 20), 8 | (255 << 8) | cv2.FLOODFILL_MASK_ONLY)
             mask_roi = mask_ff[1:-1, 1:-1]
             contours, _ = cv2.findContours(mask_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -2248,7 +2256,7 @@ class MainWindow(QMainWindow, WindowMixin):
                     self.statusBar().showMessage(f"¡Objeto delineado con éxito en ({cx}, {cy})!")
                     return
         except Exception as e:
-            print(f"Error FloodFill click: {e}")
+            log_autodetect_error(f"FloodFill Click ({self.file_path})", e)
 
         self.statusBar().showMessage("No se pudo extraer el objeto en el punto seleccionado.")
 
