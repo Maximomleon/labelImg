@@ -135,15 +135,18 @@ class Shape(object):
             # may be desirable.
             # self.drawVertex(vertex_path, 0)
 
+            show_vertices = self.selected or self._highlight_index is not None or not getattr(self, 'is_polygon', False)
             for i, p in enumerate(self.points):
                 line_path.lineTo(p)
-                self.draw_vertex(vertex_path, i)
+                if show_vertices:
+                    self.draw_vertex(vertex_path, i)
             if self.is_closed():
                 line_path.lineTo(self.points[0])
 
             painter.drawPath(line_path)
-            painter.drawPath(vertex_path)
-            painter.fillPath(vertex_path, self.vertex_fill_color)
+            if show_vertices:
+                painter.drawPath(vertex_path)
+                painter.fillPath(vertex_path, self.vertex_fill_color)
 
             # Draw text at the top-left
             if self.paint_label:

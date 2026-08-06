@@ -1855,11 +1855,13 @@ class MainWindow(QMainWindow, WindowMixin):
             return [(float(pt[0]), float(pt[1])) for pt in mask]
 
         pts = np.array(mask, dtype=np.float32).reshape((-1, 1, 2))
-
-        # Mild noise filtering (eps = 0.001 * perimeter) to eliminate redundant collinear pixel noise while preserving ALL detail points!
         perimeter = cv2.arcLength(pts, True)
         if perimeter > 0:
-            approx = cv2.approxPolyDP(pts, 0.001 * perimeter, True)
+            # 1st pass: Standard smooth approximation
+            approx = cv2.approxPolyDP(pts, 0.003 * perimeter, True)
+            # 2nd pass: If polygon has > 45 points, adaptively increase epsilon to prevent UI lag
+            if len(approx) > 45:
+                approx = cv2.approxPolyDP(pts, 0.007 * perimeter, True)
             pts_list = [(float(pt[0][0]), float(pt[0][1])) for pt in approx]
         else:
             pts_list = [(float(pt[0]), float(pt[1])) for pt in mask]
