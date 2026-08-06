@@ -1905,6 +1905,37 @@ class MainWindow(QMainWindow, WindowMixin):
 
         return shapes_list
 
+    def cv2_imread_utf8(self, file_path):
+        import cv2
+        import numpy as np
+        if not file_path or not os.path.exists(file_path):
+            return None
+        try:
+            data = np.fromfile(file_path, dtype=np.uint8)
+            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+            if img is not None:
+                return img
+        except Exception:
+            pass
+        return cv2.imread(os.path.normpath(file_path))
+
+    def get_yolo_class_name(self, class_idx):
+        if not hasattr(self, 'yolo_model') or self.yolo_model is None:
+            return f"class_{class_idx}"
+        names = getattr(self.yolo_model, 'names', {})
+        if isinstance(names, dict):
+            if class_idx in names:
+                return names[class_idx]
+            elif str(class_idx) in names:
+                return names[str(class_idx)]
+            elif int(class_idx) in names:
+                return names[int(class_idx)]
+        elif isinstance(names, (list, tuple)) and 0 <= class_idx < len(names):
+            return names[class_idx]
+        if hasattr(self, 'label_hist') and self.label_hist and 0 <= class_idx < len(self.label_hist):
+            return self.label_hist[class_idx]
+        return f"class_{class_idx}"
+
     def auto_detect_yolo(self):
         if self.file_path is None or not os.path.exists(self.file_path):
             return
@@ -1918,6 +1949,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.statusBar().showMessage("No se ha seleccionado ningún archivo .pt válido.")
             return
 
+        model_path = os.path.normpath(model_path)
         conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
         imgsz = int(self.settings.get(SETTING_YOLO_IMGSZ, 1280))
 
@@ -1930,13 +1962,19 @@ class MainWindow(QMainWindow, WindowMixin):
                 self.loaded_yolo_path = model_path
             except Exception as e:
                 self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
+                QMessageBox.critical(self, "Error de YOLO", f"No se pudo cargar el modelo:\n{str(e)}")
                 return
 
         self.statusBar().showMessage(f"Autodetectando objetos en {os.path.basename(self.file_path)}...")
         QApplication.processEvents()
 
         try:
-            results = self.yolo_model.predict(self.file_path, conf=conf, imgsz=imgsz, rect=True, verbose=False)
+            img = self.cv2_imread_utf8(self.file_path)
+            if img is None:
+                self.statusBar().showMessage("Error abriendo la imagen.")
+                return
+
+            results = self.yolo_model.predict(img, conf=conf, imgsz=imgsz, rect=True, verbose=False, workers=0)
             if not results:
                 self.statusBar().showMessage("No se detectaron objetos en la imagen.")
                 return
@@ -1949,14 +1987,14 @@ class MainWindow(QMainWindow, WindowMixin):
                 img_shape = result.orig_shape
                 for mask, box in zip(result.masks.xy, result.boxes):
                     class_idx = int(box.cls[0].item())
-                    class_name = self.yolo_model.names[class_idx]
+                    class_name = self.get_yolo_class_name(class_idx)
                     split_polys = self.extract_split_contours(mask, img_shape, class_name)
                     for poly in split_polys:
                         shapes.append((class_name, poly, None, None, False, True))
             else:
                 for box in result.boxes:
                     class_idx = int(box.cls[0].item())
-                    class_name = self.yolo_model.names[class_idx]
+                    class_name = self.get_yolo_class_name(class_idx)
                     xyxy = box.xyxy[0].tolist()
                     x1, y1, x2, y2 = xyxy
                     points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
@@ -1970,6 +2008,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 self.statusBar().showMessage("No se encontraron detecciones con la confianza actual.")
         except Exception as e:
             self.statusBar().showMessage(f"Error en autodetección: {str(e)}")
+            QMessageBox.warning(self, "Error en Autodetección", f"Ocurrió un error al ejecutar YOLO:\n{str(e)}")
 
     def auto_detect_all_images(self):
         if not hasattr(self, 'm_img_list') or not self.m_img_list:
@@ -1985,6 +2024,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.statusBar().showMessage("No se ha seleccionado ningún archivo .pt válido.")
             return
 
+        model_path = os.path.normpath(model_path)
         if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
             self.statusBar().showMessage(f"Cargando modelo YOLO ({os.path.basename(model_path)})...")
             QApplication.processEvents()
@@ -1994,6 +2034,7 @@ class MainWindow(QMainWindow, WindowMixin):
                 self.loaded_yolo_path = model_path
             except Exception as e:
                 self.statusBar().showMessage(f"Error cargando YOLO: {str(e)}")
+                QMessageBox.critical(self, "Error de YOLO", f"No se pudo cargar el modelo:\n{str(e)}")
                 return
 
         conf = float(self.settings.get(SETTING_YOLO_CONF, 0.25))
@@ -2024,7 +2065,11 @@ class MainWindow(QMainWindow, WindowMixin):
             QApplication.processEvents()
 
             try:
-                results = self.yolo_model.predict(img_path, conf=conf, imgsz=imgsz, rect=True, verbose=False)
+                img = self.cv2_imread_utf8(img_path)
+                if img is None:
+                    continue
+
+                results = self.yolo_model.predict(img, conf=conf, imgsz=imgsz, rect=True, verbose=False, workers=0)
                 if not results:
                     continue
 
@@ -2036,14 +2081,14 @@ class MainWindow(QMainWindow, WindowMixin):
                     img_shape = result.orig_shape
                     for mask, box in zip(result.masks.xy, result.boxes):
                         class_idx = int(box.cls[0].item())
-                        class_name = self.yolo_model.names[class_idx]
+                        class_name = self.get_yolo_class_name(class_idx)
                         split_polys = self.extract_split_contours(mask, img_shape, class_name)
                         for poly in split_polys:
                             shapes.append((class_name, poly, None, None, False, True))
                 else:
                     for box in result.boxes:
                         class_idx = int(box.cls[0].item())
-                        class_name = self.yolo_model.names[class_idx]
+                        class_name = self.get_yolo_class_name(class_idx)
                         xyxy = box.xyxy[0].tolist()
                         x1, y1, x2, y2 = xyxy
                         points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
@@ -2051,13 +2096,12 @@ class MainWindow(QMainWindow, WindowMixin):
 
                 if shapes:
                     self.load_labels(shapes)
-                    self.set_dirty()
                     self.save_file()
             except Exception as e:
                 print(f"Error procesando {img_path}: {e}")
 
-        self.statusBar().showMessage(f"¡Autodetección por lote completada! Se procesaron {total} imágenes.")
-        QMessageBox.information(self, "Proceso Completado", f"Se han detectado y guardado automáticamente las etiquetas para las {total} imágenes.")
+        self.statusBar().showMessage(f"¡Autodetección completa finalizada para las {total} imágenes!")
+        QMessageBox.information(self, "Proceso Completado", f"Se completó la autodetección automática para las {total} imágenes.")
 
     def add_single_polygon(self, label, points):
         color = generate_color_by_text(label)
@@ -2074,18 +2118,17 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.repaint()
         self.set_dirty()
 
-    def on_point_clicked(self, pos, modifiers=None):
+    def yolo_segment_hover_click(self, click_x, click_y):
         import cv2
         import numpy as np
-
         if self.file_path is None or not os.path.exists(self.file_path):
             return
 
-        click_x, click_y = float(pos.x()), float(pos.y())
         model_path = self.settings.get(SETTING_YOLO_MODEL_PATH, "")
 
         # 1. Try YOLO model point matching first if model path exists
         if model_path and os.path.exists(model_path):
+            model_path = os.path.normpath(model_path)
             if not hasattr(self, 'yolo_model') or self.yolo_model is None or getattr(self, 'loaded_yolo_path', None) != model_path:
                 try:
                     from ultralytics import YOLO
@@ -2101,29 +2144,31 @@ class MainWindow(QMainWindow, WindowMixin):
                 QApplication.processEvents()
 
                 try:
-                    results = self.yolo_model.predict(self.file_path, conf=0.05, imgsz=1280, rect=True, verbose=False)
-                    if results and hasattr(results[0], 'masks') and results[0].masks is not None:
-                        best_match = None
-                        min_dist = float('inf')
+                    img = self.cv2_imread_utf8(self.file_path)
+                    if img is not None:
+                        results = self.yolo_model.predict(img, conf=0.05, imgsz=1280, rect=True, verbose=False, workers=0)
+                        if results and hasattr(results[0], 'masks') and results[0].masks is not None:
+                            best_match = None
+                            min_dist = float('inf')
 
-                        for mask_pts, box in zip(results[0].masks.xy, results[0].boxes):
-                            pts_np = np.array(mask_pts, dtype=np.float32)
-                            dist = cv2.pointPolygonTest(pts_np, (click_x, click_y), True)
-                            if dist >= 0:  # Point is inside mask!
-                                best_match = (mask_pts, box)
-                                break
-                            elif abs(dist) < min_dist and abs(dist) < 50:
-                                min_dist = abs(dist)
-                                best_match = (mask_pts, box)
+                            for mask_pts, box in zip(results[0].masks.xy, results[0].boxes):
+                                pts_np = np.array(mask_pts, dtype=np.float32)
+                                dist = cv2.pointPolygonTest(pts_np, (click_x, click_y), True)
+                                if dist >= 0:  # Point is inside mask!
+                                    best_match = (mask_pts, box)
+                                    break
+                                elif abs(dist) < min_dist and abs(dist) < 50:
+                                    min_dist = abs(dist)
+                                    best_match = (mask_pts, box)
 
-                        if best_match:
-                            mask_pts, box = best_match
-                            class_idx = int(box.cls[0].item())
-                            class_name = self.yolo_model.names[class_idx]
-                            points = self.format_mask_points(mask_pts, class_name)
-                            self.add_single_polygon(class_name, points)
-                            self.statusBar().showMessage(f"¡{class_name} delineado con éxito en ({int(click_x)}, {int(click_y)})!")
-                            return
+                            if best_match:
+                                mask_pts, box = best_match
+                                class_idx = int(box.cls[0].item())
+                                class_name = self.get_yolo_class_name(class_idx)
+                                points = self.format_mask_points(mask_pts, class_name)
+                                self.add_single_polygon(class_name, points)
+                                self.statusBar().showMessage(f"¡{class_name} delineado con éxito en ({int(click_x)}, {int(click_y)})!")
+                                return
                 except Exception as e:
                     print(f"Error YOLO click: {e}")
 
@@ -2131,7 +2176,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.statusBar().showMessage(f"Delineando objeto por color/borde en ({int(click_x)}, {int(click_y)})...")
         QApplication.processEvents()
 
-        img = cv2.imread(self.file_path)
+        img = self.cv2_imread_utf8(self.file_path)
         if img is None:
             return
 
